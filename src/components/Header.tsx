@@ -2,6 +2,7 @@ import React from 'react';
 import { Calendar, Clock, Settings, HardHat, FileText, Users, UserCheck, LogOut, Shield, KeyRound } from 'lucide-react';
 import { DDPSStatus, Usuario } from '../types';
 import { formatarHoraApenas, formatarDataApenas } from '../utils/dateFormatter';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface HeaderProps {
   status?: DDPSStatus | null;
@@ -127,6 +128,9 @@ export const Header: React.FC<HeaderProps> = ({
               <FileText className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
           )}
+
+          {/* PWA Install Button */}
+          <PWAInstallButton />
 
           {/* Config / API connection button */}
           {onOpenConfig && (

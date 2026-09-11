@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { HardHat, Lock, User, AlertCircle, Loader2, KeyRound, ArrowLeft, Copy, Check, ShieldCheck } from 'lucide-react';
 import { Usuario } from '../types';
 import { api } from '../services/api';
+import { PWAInstallButton } from '../components/PWAInstallButton';
 
 interface LoginViewProps {
   onLoginSuccess: (user: Usuario) => void;
@@ -433,8 +434,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
           </form>
         )}
 
-        <div className="mt-8 pt-4 border-t border-gray-800 text-center text-[11px] text-gray-500 font-medium">
-          DDPS Campo • Sistema de Segurança do Trabalho
+        <div className="mt-8 pt-4 border-t border-gray-800 flex flex-col items-center gap-3 text-center text-[11px] text-gray-500 font-medium">
+          <PWAInstallButton />
+          <div>DDPS Campo • Sistema de Segurança do Trabalho</div>
         </div>
       </div>
     </div>
