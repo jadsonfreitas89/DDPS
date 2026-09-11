@@ -1,0 +1,1463 @@
+import React, {
+  useState,
+  useEffect,
+  useCallback
+} from 'react';
+
+import {
+  ScreenView,
+  DDPSStatus,
+  Funcionario,
+  DDS,
+  Participante,
+  Usuario
+} from './types';
+
+import {
+  api,
+  getApiBaseUrl,
+  LocalDDSStorage
+} from './services/api';
+
+import { DDSListView } from './views/DDSListView';
+import { Header } from './components/Header';
+import { LoadingSpinner } from './components/LoadingSpinner';
+import { ErrorMessage } from './components/ErrorMessage';
+import { ApiConfigModal } from './components/ApiConfigModal';
+
+import { HomeView } from './views/HomeView';
+import { NewDDSView } from './views/NewDDSView';
+import { ParticipantsView } from './views/ParticipantsView';
+import { ConferenceView } from './views/ConferenceView';
+import { DDSDetailModal } from './views/DDSDetailModal';
+import { EmployeesView } from './views/EmployeesView';
+import { LoginView } from './views/LoginView';
+import { UserManagementView } from './views/UserManagementView';
+import { ChangePasswordModal } from './components/ChangePasswordModal';
+
+import {
+  CheckCircle,
+  AlertCircle
+} from 'lucide-react';
+
+const DRAFT_STORAGE_KEY =
+  'ddps_active_draft_v1';
+
+export default function App() {
+
+  // ==========================================================
+  // ESTADO DE NAVEGAÇÃO
+  // ==========================================================
+
+  const [
+    currentScreen,
+    setCurrentScreen
+  ] = useState<ScreenView>('inicio');
+
+  // ==========================================================
+  // DADOS CENTRAIS
+  // ==========================================================
+
+  const [
+    status,
+    setStatus
+  ] = useState<DDPSStatus | null>(null);
+
+  const [
+    funcionarios,
+    setFuncionarios
+  ] = useState<Funcionario[]>([]);
+
+  const [
+    allFuncionarios,
+    setAllFuncionarios
+  ] = useState<Funcionario[]>([]);
+
+  const loadAllFuncionarios = useCallback(async () => {
+    try {
+      const list = await api.getFuncionarios(true);
+      setAllFuncionarios(list);
+    } catch (e) {
+      console.warn('Erro ao carregar todos os funcionários:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (currentScreen === 'funcionarios') {
+      loadAllFuncionarios();
+    }
+  }, [currentScreen, loadAllFuncionarios]);
+
+  const [
+    ddsSemana,
+    setDdsSemana
+  ] = useState<DDS[]>([]);
+
+  // ==========================================================
+  // DDS ATIVO
+  // ==========================================================
+
+  const [
+    activeDDS,
+    setActiveDDS
+  ] = useState<DDS | null>(null);
+
+  const [
+    participantesMap,
+    setParticipantesMap
+  ] = useState<Record<string, Participante>>({});
+
+  // ==========================================================
+  // MODAIS E ESTADOS AUXILIARES
+  // ==========================================================
+
+  const [
+    selectedDDSForView,
+    setSelectedDDSForView
+  ] = useState<DDS | null>(null);
+
+  const [
+    showConfigModal,
+    setShowConfigModal
+  ] = useState(false);
+
+  const [
+    showChangePassModal,
+    setShowChangePassModal
+  ] = useState(false);
+
+  const [
+    isLoading,
+    setIsLoading
+  ] = useState(true);
+
+  const [
+    isActionLoading,
+    setIsActionLoading
+  ] = useState(false);
+
+  const [
+    isSyncing,
+    setIsSyncing
+  ] = useState(false);
+
+  const [
+    errorMsg,
+    setErrorMsg
+  ] = useState<string | null>(null);
+
+  const [
+    notification,
+    setNotification
+  ] = useState<{
+    type:
+      | 'success'
+      | 'info'
+      | 'error';
+    text: string;
+  } | null>(null);
+
+  // ==========================================================
+  // RECUPERA RASCUNHO
+  // ==========================================================
+
+  useEffect(() => {
+
+    try {
+
+      const draft =
+        localStorage.getItem(
+          DRAFT_STORAGE_KEY
+        );
+
+      if (draft) {
+
+        const parsed =
+          JSON.parse(draft);
+
+        if (
+          parsed.activeDDS &&
+          parsed.currentScreen &&
+          parsed.currentScreen !== 'inicio'
+        ) {
+
+          setActiveDDS(
+            parsed.activeDDS
+          );
+
+          setParticipantesMap(
+            parsed.participantesMap || {}
+          );
+
+          setCurrentScreen(
+            parsed.currentScreen
+          );
+        }
+      }
+
+    } catch {
+
+      // Ignora erro no rascunho
+    }
+
+  }, []);
+
+  // ==========================================================
+  // SALVA RASCUNHO DO DDS ATIVO
+  // ==========================================================
+
+  useEffect(() => {
+
+    if (
+      activeDDS &&
+      currentScreen !== 'inicio'
+    ) {
+
+      try {
+
+        localStorage.setItem(
+          DRAFT_STORAGE_KEY,
+          JSON.stringify({
+            activeDDS,
+            participantesMap,
+            currentScreen
+          })
+        );
+
+      } catch {
+
+        // Storage quota
+      }
+
+    } else if (
+      currentScreen === 'inicio'
+    ) {
+
+      localStorage.removeItem(
+        DRAFT_STORAGE_KEY
+      );
+    }
+
+  }, [
+    activeDDS,
+    participantesMap,
+    currentScreen
+  ]);
+
+  // ==========================================================
+  // CARREGAMENTO INICIAL
+  // ==========================================================
+
+  const loadInitialData =
+    useCallback(
+      async () => {
+
+        setIsLoading(true);
+        setErrorMsg(null);
+
+        try {
+
+          // --------------------------------------------------
+          // STATUS + DDS DA SEMANA
+          // --------------------------------------------------
+
+          const [
+            statusRes,
+            ddsSemanaRes
+          ] =
+            await Promise.all([
+              api
+                .getStatus()
+                .catch(() => null),
+
+              api
+                .listarDDS()
+                .catch(() => [])
+            ]);
+
+          if (statusRes) {
+
+            setStatus(
+              statusRes
+            );
+          }
+
+          setDdsSemana(
+            ddsSemanaRes
+          );
+
+          // --------------------------------------------------
+          // FUNCIONÁRIOS
+          // --------------------------------------------------
+
+          const funcsRes =
+            await api.getFuncionarios();
+
+          setFuncionarios(
+            funcsRes
+          );
+
+        } catch (err: any) {
+
+          console.error(
+            'Erro ao carregar colaboradores:',
+            err
+          );
+
+          setErrorMsg(
+            'Não foi possível carregar os colaboradores. Verifique a conexão.'
+          );
+
+          setFuncionarios([]);
+
+        } finally {
+
+          setIsLoading(false);
+        }
+
+      },
+      []
+    );
+
+  // ==========================================================
+  // AUTENTICAÇÃO E SESSÃO
+  // ==========================================================
+
+  const [currentUser, setCurrentUser] = useState<Usuario | null>(null);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+
+  const handleLoginSuccess = async (user: Usuario) => {
+    setCurrentUser(user);
+    setIsLoading(true);
+    await loadInitialData();
+    setIsLoading(false);
+  };
+
+  const handleLogout = async () => {
+    await api.logout();
+    setCurrentUser(null);
+    setCurrentScreen('inicio');
+    setActiveDDS(null);
+    setParticipantesMap({});
+  };
+
+  useEffect(() => {
+    const verificarAutenticacao = async () => {
+      setIsCheckingAuth(true);
+      try {
+        const res = await api.validarSessao();
+        if (res.sucesso && res.usuario) {
+          setCurrentUser(res.usuario);
+          await loadInitialData();
+        } else {
+          setCurrentUser(null);
+        }
+      } catch (err) {
+        console.warn('Erro ao verificar sessão:', err);
+        setCurrentUser(null);
+      } finally {
+        setIsCheckingAuth(false);
+        setIsLoading(false);
+      }
+    };
+
+    verificarAutenticacao();
+  }, [loadInitialData]);
+
+  // ==========================================================
+  // TOAST
+  // ==========================================================
+
+  const showToast = (
+    text: string,
+    type:
+      | 'success'
+      | 'info'
+      | 'error' = 'success'
+  ) => {
+
+    setNotification({
+      type,
+      text
+    });
+
+    setTimeout(() => {
+
+      setNotification(
+        null
+      );
+
+    }, 4000);
+  };
+
+  // ==========================================================
+  // INICIAR NOVO DDS
+  // ==========================================================
+
+  const handleStartNovoDDS =
+    () => {
+      setActiveDDS(null);
+      setParticipantesMap({});
+      setCurrentScreen(
+        'novo_dds'
+      );
+    };
+
+  // ==========================================================
+  // CRIAR NOVO DDS
+  // ==========================================================
+
+  const handleCreateDDS =
+    async (
+      formData: {
+        tema: string;
+        conteudo: string;
+        local: string;
+        responsavel: string;
+        observacoes?: string;
+        encarregadoId?: string;
+        encarregadoNome?: string;
+      }
+    ) => {
+
+      setIsActionLoading(true);
+
+      try {
+
+        const result =
+          await api.criarDDS(
+            formData
+          );
+
+        const novoDDS: DDS = {
+
+          idDDS:
+            result.idDDS,
+
+          semana:
+            status?.semana,
+
+          diaSemana:
+            status?.diaSemana ||
+            'Hoje',
+
+          diaSemanaNumero:
+            status?.diaSemanaNumero,
+
+          data:
+            status?.data ||
+            '',
+
+          horario:
+            status?.horario ||
+            '',
+
+          tema:
+            formData.tema,
+
+          conteudo:
+            formData.conteudo,
+
+          local:
+            formData.local,
+
+          responsavel:
+            formData.responsavel,
+
+          observacoes:
+            formData.observacoes,
+
+          status:
+            'pendente',
+
+          participantesQtd:
+            0,
+
+          encarregadoId:
+            formData.encarregadoId || '',
+
+          encarregadoNome:
+            formData.encarregadoNome || '',
+
+          assinaturaEncarregado:
+            ''
+        };
+
+        setActiveDDS(
+          novoDDS
+        );
+
+        setParticipantesMap({});
+
+        showToast(
+          'DDS registrado com sucesso! Coletando participantes.',
+          'success'
+        );
+
+        setCurrentScreen(
+          'participantes'
+        );
+
+      } catch (err: any) {
+
+        console.error(
+          'Erro ao criar DDS:',
+          err
+        );
+
+        const msg = err?.message || 'Falha ao comunicar com a API do Google Apps Script. Verifique os dados.';
+        setErrorMsg(msg);
+        showToast(msg, 'error');
+
+      } finally {
+
+        setIsActionLoading(
+          false
+        );
+      }
+    };
+
+  // ==========================================================
+  // ATUALIZA PARTICIPANTE NO MAPA
+  // ==========================================================
+
+  const handleUpdateParticipante =
+    (
+      idFuncionario: string,
+      data: Partial<Participante>
+    ) => {
+
+      setParticipantesMap(
+        (prev) => {
+
+          const existing =
+            prev[idFuncionario] || {
+              idFuncionario,
+              nome: '',
+              emociograma: 'BOM',
+              assinatura: ''
+            };
+
+          return {
+
+            ...prev,
+
+            [idFuncionario]: {
+
+              ...existing,
+
+              ...data
+            }
+          };
+        }
+      );
+    };
+
+  // ==========================================================
+  // SALVAR PARTICIPANTES E AVANÇAR PARA CONFERÊNCIA
+  // ==========================================================
+
+  const handleFinishParticipants = async () => {
+    if (!activeDDS || isActionLoading) {
+      return;
+    }
+
+    const currentIdDDS = String(activeDDS.idDDS || '').trim();
+    if (!currentIdDDS) {
+      setErrorMsg('ID do DDS inválido para salvamento.');
+      showToast('ID do DDS inválido.', 'error');
+      return;
+    }
+
+    setIsActionLoading(true);
+    setErrorMsg(null);
+
+    try {
+      // ----------------------------------------------------
+      // PEGA SOMENTE OS PARTICIPANTES ASSINADOS
+      // ----------------------------------------------------
+      const assinados = (
+        Object.values(participantesMap) as Participante[]
+      ).filter(
+        (p) => Boolean(p.assinatura && p.assinatura.length > 50)
+      );
+
+      if (assinados.length === 0) {
+        throw new Error('É necessário coletar ao menos 1 assinatura para finalizar os participantes.');
+      }
+
+      console.log('================================================');
+      console.log('[DDPS APP] INICIANDO SALVAMENTO DE PARTICIPANTES');
+      console.log('[DDPS APP] ID_DDS:', currentIdDDS);
+      console.log('[DDPS APP] Total assinados:', assinados.length);
+
+      // a) Salvar todos os participantes e assinaturas
+      const resultado = await api.salvarParticipantes(currentIdDDS, assinados);
+
+      console.log('[DDPS APP] RESULTADO SALVAR PARTICIPANTES:', resultado);
+
+      // b) Confirmar explicitamente resultado.sucesso === true || resultado.success === true
+      const salvamentoSucesso = Boolean(
+        resultado &&
+        ((resultado as any).sucesso === true || (resultado as any).success === true)
+      );
+
+      // c) Se qualquer falha ocorrer, PARAR imediatamente e permanecer na tela atual
+      if (!salvamentoSucesso) {
+        throw new Error(
+          resultado?.message ||
+          (resultado as any)?.mensagem ||
+          'O servidor rejeitou a gravação dos participantes e assinaturas.'
+        );
+      }
+
+      showToast(
+        `${assinados.length} participante(s) gravado(s) com sucesso! Avançando para a conferência.`,
+        'success'
+      );
+
+      // d) Avança exclusivamente para a tela de conferência
+      setCurrentScreen('conferencia');
+
+    } catch (err: any) {
+      console.error('================================================');
+      console.error('[DDPS APP] ERRO AO SALVAR PARTICIPANTES:', err);
+      console.error('================================================');
+
+      setErrorMsg(
+        err?.message ||
+        'Erro ao salvar participantes no servidor.'
+      );
+
+      showToast(
+        err?.message || 'Falha ao salvar participantes. Permaneça na tela para tentar novamente.',
+        'error'
+      );
+
+      // NÃO muda de tela. O usuário continua na tela de participantes.
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  // ==========================================================
+  // FINALIZAR DDS (A PARTIR DA CONFERÊNCIA)
+  // ==========================================================
+
+  const handleSaveAndFinalizeDDS = async () => {
+    if (!activeDDS || isActionLoading) {
+      return;
+    }
+
+    const currentIdDDS = String(activeDDS.idDDS || '').trim();
+    if (!currentIdDDS) {
+      setErrorMsg('ID do DDS inválido para salvamento.');
+      showToast('ID do DDS inválido.', 'error');
+      return;
+    }
+
+    setIsActionLoading(true);
+    setErrorMsg(null);
+
+    try {
+      const allParts = Object.values(participantesMap) as Participante[];
+      const participantesFinal = allParts.filter(
+        (p) => Boolean(p.assinatura && p.assinatura.length > 50)
+      );
+
+      const payloadParts = participantesFinal.map((p) => ({
+        idFuncionario: p.idFuncionario,
+        nome: p.nome,
+        emociograma: p.emociograma,
+        assinatura: p.assinatura
+      }));
+
+      // 1 Única Chamada HTTP Consolidada para salvar participantes e finalizar
+      const resultado = await api.salvarDDSCompleto({
+        idDDS: currentIdDDS,
+        participantes: payloadParts,
+        finalizar: true
+      });
+
+      const finalizacaoSucesso = Boolean(
+        resultado &&
+        ((resultado as any).sucesso === true || (resultado as any).success === true)
+      );
+
+      if (!finalizacaoSucesso) {
+        throw new Error(
+          resultado?.message ||
+          'O servidor não confirmou a finalização do DDS.'
+        );
+      }
+
+      // Atualiza a lista localmente sem necessidade de re-query HTTP completa
+      setDdsSemana((prev) =>
+        prev.map((d) =>
+          d.idDDS === currentIdDDS
+            ? { ...d, status: 'FINALIZADO', participantesQtd: participantesFinal.length }
+            : d
+        )
+      );
+
+      // LIMPA RASCUNHO
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+      setActiveDDS(null);
+      setParticipantesMap({});
+
+      showToast(
+        'DDS Finalizado e registrado na planilha com sucesso!',
+        'success'
+      );
+
+      // Navega para a tela inicial somente após todas as operações terminarem com sucesso
+      setCurrentScreen('inicio');
+
+      api
+        .getStatus()
+        .then(setStatus)
+        .catch((err) =>
+          console.warn('[DDPS APP] Falha ao atualizar status:', err)
+        );
+
+    } catch (err: any) {
+      console.error('================================================');
+      console.error('[DDPS APP] ERRO AO FINALIZAR DDS:', err);
+      console.error('================================================');
+
+      setErrorMsg(
+        err?.message ||
+        'Erro ao finalizar DDS no Google Apps Script.'
+      );
+
+      showToast(
+        err?.message || 'Falha ao finalizar DDS. Permaneça na tela para revisar.',
+        'error'
+      );
+
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  // ==========================================================
+  // NOVA SEMANA
+  // ==========================================================
+
+  const handleNovaSemana =
+    async () => {
+
+      setIsActionLoading(
+        true
+      );
+
+      try {
+
+        const res =
+          await api.novaSemana();
+
+        if (
+          !res.success
+        ) {
+
+          throw new Error(
+            res.message ||
+            'Falha ao iniciar nova semana.'
+          );
+        }
+
+        showToast(
+          res.message ||
+          'Nova semana iniciada! Aba DDPS limpa e pronta para preenchimento semanal.',
+          'success'
+        );
+
+        const novoStatus =
+          await api.getStatus();
+
+        if (novoStatus) {
+
+          setStatus(
+            novoStatus
+          );
+        }
+
+        const novosDDS =
+          await api.getDDSSemana();
+
+        setDdsSemana(
+          novosDDS
+        );
+
+      } catch (err: any) {
+
+        console.error(
+          'Erro ao iniciar nova semana:',
+          err
+        );
+
+        showToast(
+          err?.message ||
+          'Erro ao iniciar nova semana no Google Apps Script.',
+          'error'
+        );
+
+      } finally {
+
+        setIsActionLoading(
+          false
+        );
+      }
+    };
+
+  // ==========================================================
+  // DELETAR DDS SUCESSO
+  // ==========================================================
+
+  const handleDeleteSuccess = (idDDS: string) => {
+    setDdsSemana((prev) => prev.filter((d) => d.idDDS !== idDDS));
+    if (activeDDS && activeDDS.idDDS === idDDS) {
+      setActiveDDS(null);
+      setParticipantesMap({});
+    }
+    setSelectedDDSForView(null);
+    showToast('DDS excluído com sucesso.', 'success');
+  };
+
+  // ==========================================================
+  // SINCRONIZAR DADOS MANUALMENTE
+  // ==========================================================
+
+  const handleSync = async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+
+    try {
+      const [ddsRes, funcsRes, statusRes] = await Promise.all([
+        api.listarDDS(),
+        api.getFuncionarios(false).catch(() => []),
+        api.getStatus().catch(() => null)
+      ]);
+
+      if (ddsRes) {
+        setDdsSemana(ddsRes);
+      }
+
+      if (funcsRes && funcsRes.length > 0) {
+        setFuncionarios(funcsRes);
+      }
+
+      if (statusRes) {
+        setStatus(statusRes);
+      }
+
+      // Se a tela de colaboradores já tiver carregado ou estiver em uso, sincroniza também
+      if (allFuncionarios.length > 0) {
+        loadAllFuncionarios();
+      }
+
+      showToast('Dados sincronizados com sucesso.', 'success');
+    } catch (err: any) {
+      console.error('[DDPS APP] Erro ao sincronizar dados:', err);
+      showToast(
+        err?.message || 'Falha ao sincronizar dados com o Google Sheets.',
+        'error'
+      );
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // ==========================================================
+  // STATUS DA API
+  // ==========================================================
+
+  const isApiConfigured =
+    Boolean(
+      getApiBaseUrl()
+    );
+
+  // ==========================================================
+  // INTERFACE
+  // ==========================================================
+
+  if (isCheckingAuth) {
+    return (
+      <div className="min-h-screen bg-[#111214] text-white flex flex-col items-center justify-center p-4">
+        <LoadingSpinner
+          message="Verificando autenticação..."
+          submessage="Carregando sessão no DDPS Web App"
+        />
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return <LoginView onLoginSuccess={handleLoginSuccess} />;
+  }
+
+  return (
+    <div
+      className="
+        min-h-screen
+        bg-[#F3F4F6]
+        text-[#1A1C1E]
+        flex
+        flex-col
+        font-sans
+        selection:bg-yellow-400
+        selection:text-black
+      "
+    >
+
+      {/* =====================================================
+          NOTIFICAÇÃO
+      ====================================================== */}
+
+      {notification && (
+
+        <div
+          className="
+            fixed
+            top-18
+            inset-x-4
+            z-50
+            max-w-md
+            mx-auto
+            animate-bounce
+            flex
+            items-center
+            gap-3
+            p-4
+            rounded-2xl
+            bg-[#1A1C1E]
+            text-white
+            shadow-xl
+            border
+            border-gray-700
+          "
+        >
+
+          {notification.type ===
+            'error' ? (
+
+            <AlertCircle
+              className="
+                w-6
+                h-6
+                text-red-400
+                shrink-0
+              "
+            />
+
+          ) : (
+
+            <CheckCircle
+              className="
+                w-6
+                h-6
+                text-yellow-400
+                shrink-0
+              "
+            />
+          )}
+
+          <p
+            className="
+              text-sm
+              font-bold
+            "
+          >
+            {notification.text}
+          </p>
+
+        </div>
+      )}
+
+      {/* =====================================================
+          HEADER
+      ====================================================== */}
+
+      <Header
+        status={
+          status
+        }
+        currentUser={
+          currentUser
+        }
+        onOpenConfig={() =>
+          setShowConfigModal(true)
+        }
+        isApiConfigured={
+          isApiConfigured
+        }
+        onNavigate={(screen) => setCurrentScreen(screen)}
+        onLogout={handleLogout}
+        onChangePassword={() => setShowChangePassModal(true)}
+      />
+
+      {/* =====================================================
+          AVISO DE API
+      ====================================================== */}
+
+      {!isApiConfigured &&
+        currentScreen === 'inicio' && (
+
+        <div
+          className="
+            bg-yellow-50
+            border-b
+            border-yellow-200
+            px-4
+            py-2.5
+            text-xs
+            sm:text-sm
+            text-yellow-900
+          "
+        >
+
+          <div
+            className="
+              max-w-7xl
+              mx-auto
+              flex
+              items-center
+              justify-between
+              gap-2
+            "
+          >
+
+            <span
+              className="
+                flex
+                items-center
+                gap-2
+              "
+            >
+
+              <AlertCircle
+                className="
+                  w-4
+                  h-4
+                  text-yellow-600
+                  shrink-0
+                "
+              />
+
+              <span>
+
+                <strong>
+                  Modo Demonstração:
+                </strong>{' '}
+
+                Configure{' '}
+
+                <code
+                  className="
+                    bg-yellow-100
+                    px-1.5
+                    py-0.5
+                    rounded
+                    font-mono
+                    text-xs
+                    border
+                    border-yellow-200
+                  "
+                >
+                  VITE_DDPS_API_URL
+                </code>{' '}
+
+                com a URL do seu Web App
+                do Google Apps Script.
+
+              </span>
+
+            </span>
+
+            <button
+              type="button"
+              onClick={() =>
+                setShowConfigModal(true)
+              }
+              className="
+                text-xs
+                font-black
+                uppercase
+                underline
+                hover:text-black
+                shrink-0
+                ml-2
+              "
+            >
+              Configurar URL
+            </button>
+
+          </div>
+
+        </div>
+      )}
+
+      {/* =====================================================
+          CONTEÚDO PRINCIPAL
+      ====================================================== */}
+
+      <main
+        className="
+          flex-1
+          w-full
+          max-w-7xl
+          mx-auto
+          px-4
+          sm:px-6
+          pt-5
+          sm:pt-6
+        "
+      >
+
+        {/* ===================================================
+            ERRO GLOBAL
+        ==================================================== */}
+
+        {errorMsg && (
+
+          <div
+            className="mb-6"
+          >
+
+            <ErrorMessage
+
+              message={
+                errorMsg
+              }
+
+              onRetry={() => {
+
+                setErrorMsg(
+                  null
+                );
+
+                loadInitialData();
+              }}
+
+            />
+
+          </div>
+        )}
+
+        {/* ===================================================
+            LOADING INICIAL
+        ==================================================== */}
+
+        {isLoading ? (
+
+          <div
+            className="
+              py-20
+            "
+          >
+
+            <LoadingSpinner
+
+              message="
+                Conectando ao DDPS...
+              "
+
+              submessage="
+                Carregando programação da semana e lista de funcionários da equipe
+              "
+
+            />
+
+          </div>
+
+        ) : (
+
+          <>
+
+            {/* =================================================
+                TELA INÍCIO
+            ================================================== */}
+
+            {currentScreen ===
+              'inicio' && (
+
+              <HomeView
+
+                status={
+                  status
+                }
+
+                ddsSemana={
+                  ddsSemana
+                }
+
+                onNovoDDS={
+                  handleStartNovoDDS
+                }
+
+                onViewDDS={
+                  (dds) =>
+                    setSelectedDDSForView(
+                      dds
+                    )
+                }
+
+                onNovaSemana={
+                  handleNovaSemana
+                }
+
+                onSync={
+                  handleSync
+                }
+
+                isSyncing={
+                  isSyncing
+                }
+
+              />
+            )}
+
+            {/* =================================================
+                TELA LISTA DDS
+            ================================================== */}
+
+            {currentScreen ===
+              'lista_dds' && (
+              <DDSListView 
+                status={status}
+                onSelectDDS={(dds) => {
+                  setSelectedDDSForView(dds);
+                }}
+                onBack={() => setCurrentScreen('inicio')}
+              />
+            )}
+
+            {/* =================================================
+                TELA FUNCIONÁRIOS
+            ================================================== */}
+
+            {currentScreen ===
+              'funcionarios' && (
+              <EmployeesView
+                funcionarios={allFuncionarios}
+                onRefresh={async () => {
+                  await loadAllFuncionarios();
+                  const act = await api.getFuncionarios(false);
+                  setFuncionarios(act);
+                }}
+                onBack={() => setCurrentScreen('inicio')}
+              />
+            )}
+
+            {/* =================================================
+                TELA USUÁRIOS (ADMIN)
+            ================================================== */}
+
+            {currentScreen === 'usuarios' && currentUser && (
+              <UserManagementView
+                currentUser={currentUser}
+                onBack={() => setCurrentScreen('inicio')}
+              />
+            )}
+
+            {/* =================================================
+                TELA NOVO DDS
+            ================================================== */}
+
+            {currentScreen ===
+              'novo_dds' && (
+
+              <NewDDSView
+
+                status={
+                  status
+                }
+
+                onCancel={() =>
+                  setCurrentScreen(
+                    'inicio'
+                  )
+                }
+
+                onSubmit={
+                  handleCreateDDS
+                }
+
+                isLoading={
+                  isActionLoading
+                }
+
+                funcionarios={
+                  funcionarios
+                }
+
+              />
+            )}
+
+            {/* =================================================
+                TELA PARTICIPANTES
+            ================================================== */}
+
+            {currentScreen ===
+              'participantes' &&
+              activeDDS && (
+
+              <ParticipantsView
+
+                dds={
+                  activeDDS
+                }
+
+                funcionarios={
+                  funcionarios
+                }
+
+                participantesMap={
+                  participantesMap
+                }
+
+                onUpdateParticipante={
+                  handleUpdateParticipante
+                }
+
+                onFinishParticipants={
+                  handleFinishParticipants
+                }
+
+                onBackToDDS={() =>
+                  setCurrentScreen(
+                    'novo_dds'
+                  )
+                }
+
+                isLoading={
+                  isActionLoading
+                }
+
+              />
+            )}
+
+            {/* =================================================
+                TELA CONFERÊNCIA
+            ================================================== */}
+
+            {currentScreen ===
+              'conferencia' &&
+              activeDDS && (
+
+              <ConferenceView
+
+                dds={
+                  activeDDS
+                }
+
+                participantes={
+                  Object.values(
+                    participantesMap
+                  ) as Participante[]
+                }
+
+                onEdit={() =>
+                  setCurrentScreen(
+                    'participantes'
+                  )
+                }
+
+                onSaveDDS={
+                  handleSaveAndFinalizeDDS
+                }
+
+                onSignEncarregado={async (assinatura: string) => {
+                  if (!activeDDS) return;
+
+                  const updatedDDS = {
+                    ...activeDDS,
+                    assinaturaEncarregado: assinatura
+                  };
+                  setActiveDDS(updatedDDS);
+
+                  // Atualiza localmente para robustez offline
+                  const list = LocalDDSStorage.getDDSList();
+                  const item = list.find((d) => d.idDDS === activeDDS.idDDS);
+                  if (item) {
+                    item.assinaturaEncarregado = assinatura;
+                    LocalDDSStorage.saveDDS(item);
+                  }
+
+                  if (activeDDS.idDDS && !activeDDS.idDDS.startsWith('DDS-OFFLINE-')) {
+                    try {
+                      await api.registrarAssinaturaEncarregado(
+                        activeDDS.idDDS,
+                        activeDDS.encarregadoId || '',
+                        assinatura
+                      );
+                      showToast('Assinatura do encarregado registrada!', 'success');
+                    } catch (err) {
+                      console.error('Erro ao salvar assinatura de encarregado:', err);
+                      showToast('Salvo offline. Sincronização pendente.', 'info');
+                    }
+                  }
+                }}
+
+                isLoading={
+                  isActionLoading
+                }
+
+              />
+            )}
+
+          </>
+        )}
+
+      </main>
+
+      {/* =====================================================
+          MODAL DETALHES DDS
+      ====================================================== */}
+
+      {selectedDDSForView && (
+        <DDSDetailModal
+          dds={selectedDDSForView}
+          status={status}
+          ddsSemana={ddsSemana}
+          onClose={() => setSelectedDDSForView(null)}
+          onDeleteSuccess={handleDeleteSuccess}
+        />
+      )}
+
+      {/* =====================================================
+          MODAL CONFIGURAÇÃO DA API
+      ====================================================== */}
+
+      <ApiConfigModal
+
+        isOpen={
+          showConfigModal
+        }
+
+        onClose={() =>
+          setShowConfigModal(
+            false
+          )
+        }
+
+        onConfigSaved={() => {
+
+          loadInitialData();
+
+          showToast(
+            'Configuração de API atualizada!'
+          );
+
+        }}
+
+      />
+
+      <ChangePasswordModal
+        isOpen={showChangePassModal}
+        onClose={() => setShowChangePassModal(false)}
+      />
+
+    </div>
+  );
+}

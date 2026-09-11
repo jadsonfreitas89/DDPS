@@ -1,0 +1,6 @@
+{
+  "name": "DDPS – Diálogo Diário Participativo de Segurança",
+  "description": "Aplicativo mobile-first para realização em campo do Diálogo Diário Participativo de Segurança (DDPS), com emociograma, assinatura digital na tela e integração com Google Apps Script.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
