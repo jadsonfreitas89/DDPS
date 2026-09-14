@@ -55,9 +55,16 @@ export const ParticipantsView: React.FC<ParticipantsViewProps> = ({
     cargo: currentFuncionario.cargo
   };
 
-  // Contagem de assinados
+  // Contagem de participantes concluídos (assinado ou ausente com motivo)
+  const completedCount = (Object.values(participantesMap) as Participante[]).filter((p) => {
+    if (p.ausente) {
+      return Boolean(p.motivoAusencia && p.motivoAusencia.trim().length > 0);
+    }
+    return Boolean(p.assinatura && p.assinatura.length > 50);
+  }).length;
+
   const signedCount = (Object.values(participantesMap) as Participante[]).filter(
-    (p) => Boolean(p.assinatura && p.assinatura.length > 50)
+    (p) => !p.ausente && Boolean(p.assinatura && p.assinatura.length > 50)
   ).length;
 
   const handleEmociogramaChange = (emociograma: Emociograma) => {
@@ -65,8 +72,32 @@ export const ParticipantsView: React.FC<ParticipantsViewProps> = ({
       idFuncionario: currentFuncId,
       nome: currentFuncionario.nome,
       emociograma,
-      cargo: currentFuncionario.cargo
+      cargo: currentFuncionario.cargo,
+      ausente: false,
+      motivoAusencia: ''
     });
+  };
+
+  const handleAbsenceChange = (ausente: boolean, motivoAusencia?: string) => {
+    if (ausente) {
+      onUpdateParticipante(currentFuncId, {
+        idFuncionario: currentFuncId,
+        nome: currentFuncionario.nome,
+        cargo: currentFuncionario.cargo,
+        ausente: true,
+        motivoAusencia: motivoAusencia || 'Atestado',
+        assinatura: '',
+        emociograma: 'BOM'
+      });
+    } else {
+      onUpdateParticipante(currentFuncId, {
+        idFuncionario: currentFuncId,
+        nome: currentFuncionario.nome,
+        cargo: currentFuncionario.cargo,
+        ausente: false,
+        motivoAusencia: ''
+      });
+    }
   };
 
   const handleConfirmSignature = (signatureBase64: string) => {
@@ -78,7 +109,9 @@ export const ParticipantsView: React.FC<ParticipantsViewProps> = ({
       emociograma: currentParticipantData.emociograma || 'BOM',
       assinatura: signatureBase64,
       cargo: currentFuncionario.cargo,
-      horaAssinatura: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+      horaAssinatura: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+      ausente: false,
+      motivoAusencia: ''
     };
 
     // Salva no estado do aplicativo em memória e local storage
@@ -95,8 +128,8 @@ export const ParticipantsView: React.FC<ParticipantsViewProps> = ({
   };
 
   const handleFinalize = async () => {
-    if (signedCount === 0) {
-      setValidationAlert('É necessário coletar ao menos 1 assinatura para salvar a lista de participantes.');
+    if (completedCount === 0) {
+      setValidationAlert('É necessário registrar ao menos 1 participante (assinado ou ausente) para finalizar.');
       return;
     }
     setValidationAlert(null);
@@ -137,7 +170,7 @@ export const ParticipantsView: React.FC<ParticipantsViewProps> = ({
           className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gray-50 hover:bg-gray-100 border border-gray-200 text-xs font-bold text-gray-700 transition-colors"
         >
           <Grid className="w-4 h-4 text-yellow-600" />
-          <span>Lista ({signedCount}/{total})</span>
+          <span>Lista ({completedCount}/{total})</span>
           <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showRoster ? 'rotate-180' : ''}`} />
         </button>
       </div>
@@ -147,12 +180,14 @@ export const ParticipantsView: React.FC<ParticipantsViewProps> = ({
         <div className="bg-white border border-gray-200 rounded-3xl p-4 shadow-lg flex flex-col gap-3">
           <div className="flex items-center justify-between text-xs font-bold text-gray-500 border-b border-gray-100 pb-2">
             <span>Selecione um funcionário para ir direto:</span>
-            <span className="text-green-700">{signedCount} de {total} assinaram</span>
+            <span className="text-green-700">{signedCount} assinaram • {completedCount} concluídos de {total}</span>
           </div>
           <div className="max-h-60 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-2 pr-1">
             {funcionarios.map((func, idx) => {
               const fId = String(func.id);
-              const isAssinado = Boolean(participantesMap[fId]?.assinatura);
+              const pData = participantesMap[fId];
+              const isAus = Boolean(pData?.ausente);
+              const isAssinado = !isAus && Boolean(pData?.assinatura);
               const isCurrent = idx === currentIndex;
               return (
                 <button
@@ -165,13 +200,19 @@ export const ParticipantsView: React.FC<ParticipantsViewProps> = ({
                   className={`p-2.5 rounded-xl text-left text-xs font-semibold flex items-center justify-between gap-2 border transition-all ${
                     isCurrent
                       ? 'bg-yellow-50 border-yellow-400 text-yellow-950 font-bold'
+                      : isAus
+                      ? 'bg-red-50/70 border-red-200 text-red-950'
                       : isAssinado
                       ? 'bg-green-50/60 border-green-200 text-green-950'
                       : 'bg-gray-50 border-gray-200 text-gray-600 hover:border-gray-300'
                   }`}
                 >
                   <span className="truncate">{func.nome}</span>
-                  {isAssinado ? (
+                  {isAus ? (
+                    <span className="shrink-0 text-[10px] text-red-700 font-bold bg-red-100 px-1.5 py-0.5 rounded">
+                      Ausente ({pData?.motivoAusencia || 'Atestado'})
+                    </span>
+                  ) : isAssinado ? (
                     <span className="shrink-0 flex items-center text-green-600 font-bold gap-0.5">
                       <Check className="w-3.5 h-3.5 stroke-[3]" />
                     </span>
@@ -189,7 +230,7 @@ export const ParticipantsView: React.FC<ParticipantsViewProps> = ({
       <ProgressIndicator
         currentIndex={currentIndex}
         total={total}
-        signedCount={signedCount}
+        signedCount={completedCount}
         onPrev={() => setCurrentIndex((prev) => Math.max(0, prev - 1))}
         onNext={() => setCurrentIndex((prev) => Math.min(total - 1, prev + 1))}
         canPrev={currentIndex > 0}
@@ -202,6 +243,7 @@ export const ParticipantsView: React.FC<ParticipantsViewProps> = ({
         participanteData={currentParticipantData}
         onEmociogramaChange={handleEmociogramaChange}
         onOpenSignature={() => setIsSigning(true)}
+        onAbsenceChange={handleAbsenceChange}
         isCurrent={true}
       />
 
@@ -216,10 +258,10 @@ export const ParticipantsView: React.FC<ParticipantsViewProps> = ({
       <div className="flex flex-col gap-2 pt-1">
         <Button
           type="button"
-          variant={signedCount >= 1 ? 'primary' : 'secondary'}
+          variant={completedCount >= 1 ? 'primary' : 'secondary'}
           size="xl"
           fullWidth
-          disabled={isLoading || signedCount === 0}
+          disabled={isLoading || completedCount === 0}
           onClick={handleFinalize}
           leftIcon={<CheckCheck className="w-6 h-6 stroke-[2.5]" />}
           className="uppercase tracking-wider font-extrabold py-4"
@@ -228,7 +270,7 @@ export const ParticipantsView: React.FC<ParticipantsViewProps> = ({
         </Button>
 
         <div className="flex items-center justify-between text-xs text-gray-500 px-2 font-medium">
-          <span>{signedCount} de {total} participantes assinaram</span>
+          <span>{signedCount} assinaram • {completedCount} de {total} concluídos</span>
           {isLastParticipant ? (
             <span className="text-green-700 font-bold">Último participante da lista</span>
           ) : (

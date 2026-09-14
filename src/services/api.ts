@@ -1475,37 +1475,50 @@ export const api = {
       }
 
       return list.map(
-        (item: any) => ({
+        (item: any) => {
+          const isAusente =
+            item.ausente === true ||
+            String(item.ausente || '').trim().toUpperCase() === 'SIM' ||
+            String(item.ausente || '').trim().toUpperCase() === 'TRUE';
 
-          idFuncionario:
-            String(
-              item.idFuncionario ||
-              item.id ||
-              ''
-            ).trim(),
+          return {
+            idFuncionario:
+              String(
+                item.idFuncionario ||
+                item.id ||
+                ''
+              ).trim(),
 
-          nome:
-            String(
-              item.nome ||
-              ''
-            ).trim(),
+            nome:
+              String(
+                item.nome ||
+                ''
+              ).trim(),
 
-          emociograma:
-            normalizeEmojiToEmociograma(
+            emociograma: isAusente ? 'BOM' : normalizeEmojiToEmociograma(
               item.emociograma
             ),
 
-          assinatura:
-            String(
+            assinatura: isAusente ? '' : String(
               item.assinatura ||
               ''
             ),
 
-          horaAssinatura:
-            item.horaAssinatura ||
-            item.horarioAssinatura ||
-            item.dataHora
-        })
+            horaAssinatura:
+              item.horaAssinatura ||
+              item.horarioAssinatura ||
+              item.dataHora,
+
+            ausente: isAusente,
+
+            motivoAusencia: isAusente ? String(
+              item.motivoAusencia ||
+              item.motivo ||
+              item.MOTIVO_AUSENCIA ||
+              ''
+            ).trim() : ''
+          };
+        }
       );
 
     } catch (err) {
@@ -1810,11 +1823,15 @@ export const api = {
           nome:
             p.nome,
           emociograma:
-            normalizeEmociogramaToText(
+            p.ausente ? '' : normalizeEmociogramaToText(
               p.emociograma
             ),
           assinatura:
-            p.assinatura || ''
+            p.ausente ? '' : (p.assinatura || ''),
+          ausente:
+            p.ausente ? 'SIM' : 'NAO',
+          motivoAusencia:
+            p.ausente ? (p.motivoAusencia || '') : ''
         })
       );
 
@@ -1914,6 +1931,8 @@ export const api = {
       nome: string;
       emociograma: string;
       assinatura: string;
+      ausente?: boolean;
+      motivoAusencia?: string;
     }
   ): Promise<{
     success: boolean;
@@ -1921,6 +1940,8 @@ export const api = {
   }> {
 
     try {
+
+      const isAus = Boolean(participante.ausente);
 
       const res =
         await postWithFallback({
@@ -1934,11 +1955,15 @@ export const api = {
           nome:
             participante.nome,
           emociograma:
-            normalizeEmociogramaToText(
+            isAus ? '' : normalizeEmociogramaToText(
               participante.emociograma
             ),
           assinatura:
-            participante.assinatura || ''
+            isAus ? '' : (participante.assinatura || ''),
+          ausente:
+            isAus ? 'SIM' : 'NAO',
+          motivoAusencia:
+            isAus ? (participante.motivoAusencia || '') : ''
         });
 
       const text =

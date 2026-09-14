@@ -1,3 +1,14 @@
+/**
+ * ============================================================================
+ * REGRA ARQUITETURAL DO DDPS - PREVENÇÃO DE DUPLICAÇÃO
+ * 
+ * ANTES DE CRIAR qualquer novo botão, tela, rota, handler, view, modal ou função:
+ * 1. Verificar obrigatoriamente se já existe uma implementação equivalente no sistema.
+ * 2. Se existir: REUTILIZAR a implementação existente, consolidar handlers e remover duplicidades.
+ * 3. Não criar funções, visões ou botões paralelos para a mesma finalidade.
+ * ============================================================================
+ */
+
 import React, {
   useState,
   useEffect,
@@ -19,7 +30,6 @@ import {
   LocalDDSStorage
 } from './services/api';
 
-import { DDSListView } from './views/DDSListView';
 import { Header } from './components/Header';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { ErrorMessage } from './components/ErrorMessage';
@@ -33,15 +43,16 @@ import { DDSDetailModal } from './views/DDSDetailModal';
 import { EmployeesView } from './views/EmployeesView';
 import { LoginView } from './views/LoginView';
 import { UserManagementView } from './views/UserManagementView';
+import { ConsultarSemanasView } from './views/ConsultarSemanasView';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
+import { getSemanaId, pertenceASemana } from './utils/weekUtils';
 
 import {
   CheckCircle,
   AlertCircle
 } from 'lucide-react';
 
-const DRAFT_STORAGE_KEY =
-  'ddps_active_draft_v1';
+const getDraftStorageKey = () => `ddps_active_draft_${getSemanaId(new Date())}`;
 
 export default function App() {
 
@@ -87,6 +98,11 @@ export default function App() {
       loadAllFuncionarios();
     }
   }, [currentScreen, loadAllFuncionarios]);
+
+  const [
+    allDDS,
+    setAllDDS
+  ] = useState<DDS[]>([]);
 
   const [
     ddsSemana,
@@ -167,7 +183,7 @@ export default function App() {
 
       const draft =
         localStorage.getItem(
-          DRAFT_STORAGE_KEY
+          getDraftStorageKey()
         );
 
       if (draft) {
@@ -216,7 +232,7 @@ export default function App() {
       try {
 
         localStorage.setItem(
-          DRAFT_STORAGE_KEY,
+          getDraftStorageKey(),
           JSON.stringify({
             activeDDS,
             participantesMap,
@@ -234,7 +250,7 @@ export default function App() {
     ) {
 
       localStorage.removeItem(
-        DRAFT_STORAGE_KEY
+        getDraftStorageKey()
       );
     }
 
@@ -263,7 +279,7 @@ export default function App() {
 
           const [
             statusRes,
-            ddsSemanaRes
+            listarDDSRes
           ] =
             await Promise.all([
               api
@@ -276,14 +292,19 @@ export default function App() {
             ]);
 
           if (statusRes) {
-
             setStatus(
               statusRes
             );
           }
 
+          const rawDDSList = Array.isArray(listarDDSRes) ? listarDDSRes : [];
+          setAllDDS(rawDDSList);
+
+          const currentSemanaId = getSemanaId(new Date());
+          const ddsFiltrados = rawDDSList.filter((d) => pertenceASemana(d, currentSemanaId));
+
           setDdsSemana(
-            ddsSemanaRes
+            ddsFiltrados
           );
 
           // --------------------------------------------------
@@ -701,7 +722,7 @@ export default function App() {
       );
 
       // LIMPA RASCUNHO
-      localStorage.removeItem(DRAFT_STORAGE_KEY);
+      localStorage.removeItem(getDraftStorageKey());
       setActiveDDS(null);
       setParticipantesMap({});
 
@@ -741,76 +762,6 @@ export default function App() {
   };
 
   // ==========================================================
-  // NOVA SEMANA
-  // ==========================================================
-
-  const handleNovaSemana =
-    async () => {
-
-      setIsActionLoading(
-        true
-      );
-
-      try {
-
-        const res =
-          await api.novaSemana();
-
-        if (
-          !res.success
-        ) {
-
-          throw new Error(
-            res.message ||
-            'Falha ao iniciar nova semana.'
-          );
-        }
-
-        showToast(
-          res.message ||
-          'Nova semana iniciada! Aba DDPS limpa e pronta para preenchimento semanal.',
-          'success'
-        );
-
-        const novoStatus =
-          await api.getStatus();
-
-        if (novoStatus) {
-
-          setStatus(
-            novoStatus
-          );
-        }
-
-        const novosDDS =
-          await api.getDDSSemana();
-
-        setDdsSemana(
-          novosDDS
-        );
-
-      } catch (err: any) {
-
-        console.error(
-          'Erro ao iniciar nova semana:',
-          err
-        );
-
-        showToast(
-          err?.message ||
-          'Erro ao iniciar nova semana no Google Apps Script.',
-          'error'
-        );
-
-      } finally {
-
-        setIsActionLoading(
-          false
-        );
-      }
-    };
-
-  // ==========================================================
   // DELETAR DDS SUCESSO
   // ==========================================================
 
@@ -840,7 +791,11 @@ export default function App() {
       ]);
 
       if (ddsRes) {
-        setDdsSemana(ddsRes);
+        const rawDDSList = Array.isArray(ddsRes) ? ddsRes : [];
+        setAllDDS(rawDDSList);
+        const currentSemanaId = getSemanaId(new Date());
+        const ddsFiltrados = rawDDSList.filter((d) => pertenceASemana(d, currentSemanaId));
+        setDdsSemana(ddsFiltrados);
       }
 
       if (funcsRes && funcsRes.length > 0) {
@@ -1202,8 +1157,8 @@ export default function App() {
                     )
                 }
 
-                onNovaSemana={
-                  handleNovaSemana
+                onConsultarSemanas={
+                  () => setCurrentScreen('consultar_semanas')
                 }
 
                 onSync={
@@ -1218,13 +1173,13 @@ export default function App() {
             )}
 
             {/* =================================================
-                TELA LISTA DDS
+                TELA CONSULTAR SEMANAS (HISTÓRICO E CONSULTA DE SEMANAS)
             ================================================== */}
 
-            {currentScreen ===
-              'lista_dds' && (
-              <DDSListView 
+            {(currentScreen === 'consultar_semanas' || currentScreen === 'lista_dds') && (
+              <ConsultarSemanasView
                 status={status}
+                allDDS={allDDS}
                 onSelectDDS={(dds) => {
                   setSelectedDDSForView(dds);
                 }}

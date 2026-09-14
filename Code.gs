@@ -4778,8 +4778,28 @@ function TESTAR_IMPLANTACAO() {
  * FUNÇÕES DE SUPORTE AO ENCARREGADO DO DDS
  * ============================================================ */
 
-function garantirSchemaAssinaturas(sheet) {
+function garantirSchemaParticipantes(sheet) {
   if (!sheet) return;
+  var colCount = sheet.getLastColumn();
+  if (colCount < 2) return;
+  
+  var headers = sheet.getRange(1, 1, 1, Math.max(1, colCount)).getValues()[0];
+  var headersUpper = headers.map(function(h) { return String(h).trim().toUpperCase(); });
+  
+  if (headersUpper.indexOf('AUSENTE') === -1) {
+    sheet.getRange(1, 7).setValue('AUSENTE');
+    sheet.getRange(1, 7).setFontWeight('bold');
+    sheet.getRange(1, 7).setHorizontalAlignment('center');
+  }
+  if (headersUpper.indexOf('MOTIVO_AUSENCIA') === -1) {
+    sheet.getRange(1, 8).setValue('MOTIVO_AUSENCIA');
+    sheet.getRange(1, 8).setFontWeight('bold');
+    sheet.getRange(1, 8).setHorizontalAlignment('center');
+  }
+  SpreadsheetApp.flush();
+}
+
+function garantirSchemaAssinaturas(sheet) {
   var colCount = sheet.getLastColumn();
   if (colCount < 2) return;
   

@@ -1,17 +1,17 @@
 import React, { useState } from 'react';
-import { Plus, Users, User, Calendar, ShieldCheck, CheckCircle2, RefreshCw, FileDown } from 'lucide-react';
+import { Plus, CheckCircle2, RefreshCw, FileDown, Calendar, FileText } from 'lucide-react';
 import { DDPSStatus, DDS } from '../types';
 import { Button } from '../components/Button';
 import { DDSWeekCard } from '../components/DDSWeekCard';
-import { ConfirmationModal } from '../components/ConfirmationModal';
 import { gerarPDFSemanalDDPS } from '../utils/pdfGenerator';
+import { getIntervaloSemanaTexto, getSemanaNumero } from '../utils/weekUtils';
 
 interface HomeViewProps {
   status: DDPSStatus | null;
   ddsSemana: DDS[];
   onNovoDDS: () => void;
   onViewDDS: (dds: DDS) => void;
-  onNovaSemana: () => void;
+  onConsultarSemanas: () => void;
   onSync: () => void;
   isSyncing: boolean;
 }
@@ -48,12 +48,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
   ddsSemana,
   onNovoDDS,
   onViewDDS,
-  onNovaSemana,
+  onConsultarSemanas,
   onSync,
   isSyncing
 }) => {
-  const [showNovaSemanaModal, setShowNovaSemanaModal] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  const hoje = new Date();
+  const intervaloAtualTexto = getIntervaloSemanaTexto(hoje);
+  const semanaAtualNumero = status?.semana || getSemanaNumero(hoje);
 
   const handleGerarPDF = async () => {
     if (isGeneratingPdf) return;
@@ -67,10 +70,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
     }
   };
 
-  // Mapeia DDS para cada dia da semana
+  // Mapeia DDS para cada dia da semana (Domingo a Sábado)
   const diasComDDS = DIAS_DA_SEMANA.map((dia) => {
     const ddsEncontrado = ddsSemana.find((d) => {
-      // 1. Se diaSemanaNumero existir e for válido, utiliza-o como primeira opção
       if (d.diaSemanaNumero !== undefined && d.diaSemanaNumero !== null && !isNaN(Number(d.diaSemanaNumero))) {
         const num = Number(d.diaSemanaNumero);
         if (num === dia.numero || (dia.numero === 0 && num === 7)) {
@@ -78,7 +80,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
         }
       }
 
-      // 2. Se não existir ou não corresponder, utiliza o campo diaSemana normalizado
       if (d.diaSemana) {
         const ddsDiaLimpo = normalizarTexto(d.diaSemana);
         const alvoDiaLimpo = normalizarTexto(dia.diaCurto);
@@ -87,7 +88,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
         }
       }
 
-      // 3. Fallback por data ISO se aplicável
       if (d.data) {
         try {
           const dt = new Date(d.data);
@@ -98,7 +98,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             }
           }
         } catch {
-          // Ignora erro de parse de data
+          // Ignora erro
         }
       }
 
@@ -118,7 +118,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
     };
   });
 
-  // Verifica status do dia de hoje
   const ddsHoje = diasComDDS.find((d) => d.isToday)?.dds;
   const hojeConcluido = Boolean(ddsHoje && isStatusConcluido(ddsHoje.status));
 
@@ -162,7 +161,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     Pendente
                   </h2>
                   <p className="text-sm text-gray-500 mt-2">
-                    Nenhum DDS registrado para esta obra até o momento.
+                    Nenhum DDS registrado para esta obra hoje.
                   </p>
                 </div>
               )}
@@ -181,7 +180,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             </Button>
           </div>
 
-          {/* Card: Resumo da Equipe */}
+          {/* Card: Resumo da Equipe & Ações da Semana */}
           <div className="bg-white rounded-3xl p-6 shadow-xs border border-gray-200 flex flex-col">
             <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">
               Resumo da Equipe
@@ -226,27 +225,36 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   {isGeneratingPdf ? 'GERANDO PDF...' : 'FOLHA SEMANAL (PDF)'}
                 </Button>
 
-                <button
+                <Button
                   type="button"
-                  onClick={() => setShowNovaSemanaModal(true)}
-                  className="w-full py-2.5 text-xs font-semibold text-gray-500 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors uppercase tracking-wider"
+                  variant="secondary"
+                  size="md"
+                  fullWidth
+                  onClick={onConsultarSemanas}
+                  leftIcon={<Calendar className="w-4 h-4 text-gray-700" />}
+                  className="py-2.5 text-xs font-bold uppercase tracking-wider border border-gray-200 hover:bg-gray-100"
                 >
-                  NOVA SEMANA
-                </button>
+                  CONSULTAR SEMANAS
+                </Button>
               </div>
             </div>
           </div>
         </section>
 
-        {/* Coluna Direita: Programação da Semana (8 colunas) */}
+        {/* Coluna Direita: Programação da Semana Operacional Atual (8 colunas) */}
         <section className="lg:col-span-8 bg-white rounded-3xl shadow-xs border border-gray-200 overflow-hidden flex flex-col">
-          <div className="p-5 sm:p-6 border-b border-gray-100 flex flex-wrap gap-3 justify-between items-center">
+          <div className="p-5 sm:p-6 border-b border-gray-100 flex flex-wrap gap-3 justify-between items-center bg-gray-50/50">
             <div>
-              <h3 className="text-lg font-bold text-[#1A1C1E]">
-                Programação da Semana
-              </h3>
-              <p className="text-xs text-gray-500 mt-0.5">
-                Acompanhamento diário dos diálogos de segurança
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-bold text-[#1A1C1E]">
+                  SEMANA ATUAL
+                </h3>
+                <span className="px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider bg-yellow-400 text-black rounded-full shadow-2xs">
+                  Semana {semanaAtualNumero}
+                </span>
+              </div>
+              <p className="text-xs font-semibold text-gray-600 mt-0.5">
+                {intervaloAtualTexto}
               </p>
             </div>
             <div className="flex items-center gap-2 sm:gap-3">
@@ -261,13 +269,20 @@ export const HomeView: React.FC<HomeViewProps> = ({
               >
                 {isSyncing ? 'SINCRONIZANDO...' : 'SINCRONIZAR'}
               </Button>
-              <span className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold uppercase tracking-wider border border-gray-200/60 shrink-0">
-                Semana {status?.semana || '--'}
-              </span>
             </div>
           </div>
 
           <div className="p-4 sm:p-6 flex flex-col gap-3">
+            {/* Se ainda não existirem DDS registrados nesta semana operacional */}
+            {ddsSemana.length === 0 && (
+              <div className="p-4 rounded-2xl bg-yellow-50/80 border border-yellow-200/80 text-yellow-900 flex items-center gap-3">
+                <FileText className="w-5 h-5 text-yellow-700 shrink-0" />
+                <p className="text-xs font-bold">
+                  Nenhum DDPS registrado nesta semana.
+                </p>
+              </div>
+            )}
+
             {diasComDDS.map((item) => (
               <DDSWeekCard
                 key={item.nome}
@@ -300,20 +315,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </span>
         </div>
       </footer>
-
-      {/* Modal Nova Semana */}
-      <ConfirmationModal
-        isOpen={showNovaSemanaModal}
-        title="Iniciar Nova Semana"
-        description="Esta ação prepara a visualização para o ciclo da próxima semana no painel de campo. A geração automática do PDF consolidado da semana anterior será ativada na próxima etapa do backend."
-        confirmLabel="Confirmar Nova Semana"
-        cancelLabel="Fechar"
-        onConfirm={() => {
-          setShowNovaSemanaModal(false);
-          onNovaSemana();
-        }}
-        onCancel={() => setShowNovaSemanaModal(false)}
-      />
     </div>
   );
 };

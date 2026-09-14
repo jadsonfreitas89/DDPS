@@ -2,22 +2,23 @@ import jsPDF from 'jspdf';
 import { DDPSStatus, DDS, Participante } from '../types';
 import { api } from '../services/api';
 import { formatarDataApenas, formatarHoraApenas } from './dateFormatter';
+import { getSundayOfWeek, getSemanaId, getSemanaNumero, pertenceASemana } from './weekUtils';
 
 export interface DiaSemanaConfig {
   nome: string;
   diaCurto: string;
   chave: string;
-  numero: number; // 1 = Seg, 2 = Ter, 3 = Qua, 4 = Qui, 5 = Sex, 6 = Sáb, 0 ou 7 = Dom
+  numero: number; // 0 = Dom, 1 = Seg, 2 = Ter, 3 = Qua, 4 = Qui, 5 = Sex, 6 = Sáb
 }
 
 export const DIAS_DA_SEMANA_ORDEM_OFICIAL: DiaSemanaConfig[] = [
+  { nome: 'DOMINGO', diaCurto: 'DOMINGO', chave: 'domingo', numero: 0 },
   { nome: 'SEGUNDA-FEIRA', diaCurto: 'SEGUNDA - FEIRA', chave: 'segunda', numero: 1 },
   { nome: 'TERÇA-FEIRA', diaCurto: 'TERÇA - FEIRA', chave: 'terca', numero: 2 },
   { nome: 'QUARTA-FEIRA', diaCurto: 'QUARTA - FEIRA', chave: 'quarta', numero: 3 },
   { nome: 'QUINTA-FEIRA', diaCurto: 'QUINTA - FEIRA', chave: 'quinta', numero: 4 },
   { nome: 'SEXTA-FEIRA', diaCurto: 'SEXTA - FEIRA', chave: 'sexta', numero: 5 },
-  { nome: 'SÁBADO', diaCurto: 'SÁBADO', chave: 'sabado', numero: 6 },
-  { nome: 'DOMINGO', diaCurto: 'DOMINGO', chave: 'domingo', numero: 0 }
+  { nome: 'SÁBADO', diaCurto: 'SÁBADO', chave: 'sabado', numero: 6 }
 ];
 
 function parseDataUniversal(val?: string | number): Date | null {
@@ -93,27 +94,23 @@ export function obterIntervaloSemana(
     refDate = new Date();
   }
 
-  // Calcula a Segunda-feira da semana correspondente (ordem da folha: Seg a Dom)
-  const dayOfWeek = refDate.getDay(); // 0 = Dom, 1 = Seg, ..., 6 = Sáb
-  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-  const monday = new Date(refDate);
-  monday.setDate(refDate.getDate() + diffToMonday);
-  monday.setHours(12, 0, 0, 0);
+  // Calcula o Domingo da semana correspondente (ordem da folha: Dom a Sáb)
+  const sunday = getSundayOfWeek(refDate);
 
   const datasDias: string[] = [];
   for (let i = 0; i < 7; i++) {
-    const d = new Date(monday);
-    d.setDate(monday.getDate() + i);
+    const d = new Date(sunday);
+    d.setDate(sunday.getDate() + i);
     datasDias.push(formatDDMMAAAA(d));
   }
 
-  const dataInicioStr = datasDias[0]; // Segunda-feira
-  const dataFimStr = datasDias[6]; // Domingo
+  const dataInicioStr = datasDias[0]; // Domingo
+  const dataFimStr = datasDias[6]; // Sábado
 
   return {
     dataInicioStr,
     dataFimStr,
-    semanaNum: status?.semana,
+    semanaNum: status?.semana || getSemanaNumero(sunday),
     datasDias
   };
 }
@@ -145,6 +142,8 @@ export interface CumulativeParticipant {
       emociograma?: string; // 'BOM' | 'REGULAR' | 'RUIM'
       assinatura?: string;
       presente: boolean;
+      ausente?: boolean;
+      motivoAusencia?: string;
     };
   };
 }
@@ -341,11 +340,16 @@ export async function carregarDadosSemanaAcumulados(
         participantesMap.set(key, entry);
       }
 
-      // Registra APENAS para o dia específico (diaIndex)
+      const isAusente = p.ausente === true || String(p.ausente || '').toUpperCase() === 'SIM';
+      const motivo = isAusente ? String(p.motivoAusencia || '').trim() : '';
+
+      // Registra para o dia específico (diaIndex)
       entry.dias[diaIndex] = {
-        emociograma: p.emociograma ? String(p.emociograma).toUpperCase() : 'BOM',
-        assinatura: (p.assinatura && String(p.assinatura).trim() !== '') ? String(p.assinatura) : '',
-        presente: true
+        emociograma: isAusente ? '' : (p.emociograma ? String(p.emociograma).toUpperCase() : 'BOM'),
+        assinatura: isAusente ? '' : ((p.assinatura && String(p.assinatura).trim() !== '') ? String(p.assinatura) : ''),
+        presente: !isAusente,
+        ausente: isAusente,
+        motivoAusencia: motivo
       };
     });
   });
@@ -814,7 +818,8 @@ export async function gerarPDFSemanalDDPS(
 
       // Sub-colunas dos Emojis (Verde, Amarelo, Vermelho)
       const reg = part ? part.dias[diaIdx] : undefined;
-      const isPresent = reg && reg.presente;
+      const isAusente = Boolean(reg && reg.ausente);
+      const isPresent = Boolean(reg && reg.presente && !isAusente);
       const emo = isPresent ? (reg.emociograma || 'BOM') : '';
 
       // Coluna 1: BOM (Verde)
@@ -857,7 +862,15 @@ export async function gerarPDFSemanalDDPS(
       doc.setFillColor(255, 255, 255);
       doc.rect(rubricaX, rowY, rubricaColW, partRowH, 'FD');
 
-      if (isPresent) {
+      if (isAusente && reg?.motivoAusencia) {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(4.8);
+        doc.setTextColor(180, 0, 0);
+        const txtMotivo = reg.motivoAusencia.trim();
+        const line = doc.splitTextToSize(txtMotivo, rubricaColW - 0.5)[0] || txtMotivo;
+        doc.text(line, rubricaX + rubricaColW / 2, rowY + 3.1, { align: 'center' });
+        doc.setTextColor(0, 0, 0);
+      } else if (isPresent) {
         // Se houver assinatura digital (base64) ou marcação de presença
         if (reg.assinatura && reg.assinatura.startsWith('data:image')) {
           try {

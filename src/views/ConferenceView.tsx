@@ -35,12 +35,15 @@ export const ConferenceView: React.FC<ConferenceViewProps> = ({
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [isSigning, setIsSigning] = useState(false);
 
-  // Filtra apenas os participantes que assinaram
-  const participantesAssinados = participantes.filter(
-    (p) => Boolean(p.assinatura && p.assinatura.length > 50)
+  // Filtra participantes ativos (assinado ou ausente registrado)
+  const participantesAtivos = participantes.filter(
+    (p) => p.ausente ? Boolean(p.motivoAusencia && p.motivoAusencia.trim().length > 0) : Boolean(p.assinatura && p.assinatura.length > 50)
   );
 
-  // Contagem por emociograma
+  const participantesAssinados = participantesAtivos.filter((p) => !p.ausente);
+  const participantesAusentes = participantesAtivos.filter((p) => p.ausente);
+
+  // Contagem por emociograma (apenas dos presentes)
   const contagemBom = participantesAssinados.filter((p) => p.emociograma === 'BOM').length;
   const contagemRegular = participantesAssinados.filter((p) => p.emociograma === 'REGULAR').length;
   const contagemRuim = participantesAssinados.filter((p) => p.emociograma === 'RUIM').length;
@@ -218,7 +221,7 @@ export const ConferenceView: React.FC<ConferenceViewProps> = ({
             </span>
           </div>
           <span className="text-xs font-bold px-3 py-1 rounded-full bg-green-50 text-green-800 border border-green-200">
-            {participantesAssinados.length} participantes
+            {participantesAssinados.length} presentes • {participantesAusentes.length} ausentes ({participantesAtivos.length} total)
           </span>
         </div>
 
@@ -255,20 +258,26 @@ export const ConferenceView: React.FC<ConferenceViewProps> = ({
           </div>
         </div>
 
-        {/* Lista detalhada dos participantes que assinaram */}
+        {/* Lista detalhada dos participantes */}
         <div className="flex flex-col gap-2.5">
           <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
-            Relação de Assinaturas Coletadas
+            Relação de Participantes e Assinaturas
           </span>
 
           <div className="max-h-72 overflow-y-auto pr-1 flex flex-col gap-2">
-            {participantesAssinados.map((p, idx) => (
+            {participantesAtivos.map((p, idx) => (
               <div
                 key={p.idFuncionario || idx}
-                className="flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-gray-50 border border-gray-200"
+                className={`flex items-center justify-between gap-3 p-3.5 rounded-2xl border ${
+                  p.ausente
+                    ? 'bg-red-50/40 border-red-200'
+                    : 'bg-gray-50 border-gray-200'
+                }`}
               >
                 <div className="flex items-center gap-3">
-                  <span className="w-6 h-6 rounded-full bg-gray-200 text-gray-700 flex items-center justify-center text-xs font-bold">
+                  <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                    p.ausente ? 'bg-red-200 text-red-900' : 'bg-gray-200 text-gray-700'
+                  }`}>
                     {idx + 1}
                   </span>
                   <div>
@@ -278,33 +287,46 @@ export const ConferenceView: React.FC<ConferenceViewProps> = ({
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
-                  {/* Badge de emociograma */}
-                  <span
-                    className={`px-2.5 py-1 rounded-xl text-xs font-bold border flex items-center gap-1 ${
-                      p.emociograma === 'BOM'
-                        ? 'bg-green-50 border-green-200 text-green-900'
-                        : p.emociograma === 'REGULAR'
-                        ? 'bg-yellow-50 border-yellow-200 text-yellow-900'
-                        : 'bg-red-50 border-red-200 text-red-900'
-                    }`}
-                  >
-                    <span>
-                      {p.emociograma === 'BOM'
-                        ? '🙂 BOM'
-                        : p.emociograma === 'REGULAR'
-                        ? '😐 REGULAR'
-                        : '🙁 RUIM'}
-                    </span>
-                  </span>
+                  {p.ausente ? (
+                    <>
+                      <span className="px-2.5 py-1 rounded-xl text-xs font-bold border bg-red-100 border-red-200 text-red-900">
+                        Ausente
+                      </span>
+                      <div className="w-24 h-8 bg-white rounded-lg border border-red-200 flex items-center justify-center p-0.5 text-xs font-extrabold text-red-700 shadow-2xs">
+                        {p.motivoAusencia || 'Atestado'}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {/* Badge de emociograma */}
+                      <span
+                        className={`px-2.5 py-1 rounded-xl text-xs font-bold border flex items-center gap-1 ${
+                          p.emociograma === 'BOM'
+                            ? 'bg-green-50 border-green-200 text-green-900'
+                            : p.emociograma === 'REGULAR'
+                            ? 'bg-yellow-50 border-yellow-200 text-yellow-900'
+                            : 'bg-red-50 border-red-200 text-red-900'
+                        }`}
+                      >
+                        <span>
+                          {p.emociograma === 'BOM'
+                            ? '🙂 BOM'
+                            : p.emociograma === 'REGULAR'
+                            ? '😐 REGULAR'
+                            : '🙁 RUIM'}
+                        </span>
+                      </span>
 
-                  {/* Prévia da assinatura */}
-                  <div className="w-20 h-8 bg-white rounded-lg border border-gray-300 flex items-center justify-center p-0.5 overflow-hidden shadow-2xs">
-                    <img
-                      src={p.assinatura}
-                      alt="Assinatura"
-                      className="max-h-full object-contain"
-                    />
-                  </div>
+                      {/* Prévia da assinatura */}
+                      <div className="w-20 h-8 bg-white rounded-lg border border-gray-300 flex items-center justify-center p-0.5 overflow-hidden shadow-2xs">
+                        <img
+                          src={p.assinatura}
+                          alt="Assinatura"
+                          className="max-h-full object-contain"
+                        />
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             ))}

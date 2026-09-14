@@ -257,22 +257,15 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ onBack, 
               <p className="text-sm font-medium">Nenhum usuário cadastrado.</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm text-gray-300">
-                <thead className="bg-gray-900/60 text-xs font-bold uppercase tracking-wider text-gray-400 border-b border-gray-800">
-                  <tr>
-                    <th className="px-6 py-4">Usuário / Nome</th>
-                    <th className="px-6 py-4">Perfil</th>
-                    <th className="px-6 py-4">Status</th>
-                    <th className="px-6 py-4 text-right">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-800/60">
-                  {usuarios.map((u) => {
-                    const isSelf = u.idUsuario === currentUser.idUsuario;
-                    return (
-                      <tr key={u.idUsuario} className="hover:bg-gray-800/40 transition-colors">
-                        <td className="px-6 py-4">
+            <div>
+              {/* View Mobile: Cards */}
+              <div className="block md:hidden divide-y divide-gray-800/80">
+                {usuarios.map((u) => {
+                  const isSelf = u.idUsuario === currentUser.idUsuario;
+                  return (
+                    <div key={u.idUsuario} className="p-4 space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
                           <div className="font-bold text-white text-base flex items-center gap-2">
                             <span>{u.nome}</span>
                             {isSelf && (
@@ -284,61 +277,149 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ onBack, 
                           <div className="text-xs text-gray-400 font-mono mt-0.5">
                             @{u.usuario}
                           </div>
-                        </td>
-                        <td className="px-6 py-4">
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0 bg-gray-900 p-1 rounded-xl border border-gray-800">
+                          <button
+                            onClick={() => handleOpenEdit(u)}
+                            className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
+                            title="Editar Usuário"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleOpenResetPass(u)}
+                            className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-yellow-400 hover:text-yellow-300 transition-colors"
+                            title="Redefinir Senha"
+                          >
+                            <Key className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 text-xs pt-1">
+                        <div>
                           {u.perfil === 'ADMIN' ? (
-                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                              <Shield className="w-3.5 h-3.5" />
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                              <Shield className="w-3 h-3" />
                               ADMINISTRADOR
                             </span>
                           ) : u.perfil === 'ENCARREGADO' ? (
-                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                              <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                              <ShieldAlert className="w-3 h-3 text-amber-400" />
                               ENCARREGADO
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                              <ShieldAlert className="w-3.5 h-3.5" />
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                              <ShieldAlert className="w-3 h-3" />
                               TÉCNICO TST
                             </span>
                           )}
-                        </td>
-                        <td className="px-6 py-4">
+                        </div>
+
+                        <div>
                           {u.ativo !== false ? (
-                            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-400">
-                              <CheckCircle className="w-4 h-4" />
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-400">
+                              <CheckCircle className="w-3.5 h-3.5" />
                               Ativo
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-400">
-                              <XCircle className="w-4 h-4" />
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-400">
+                              <XCircle className="w-3.5 h-3.5" />
                               Inativo
                             </span>
                           )}
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              onClick={() => handleOpenEdit(u)}
-                              className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
-                              title="Editar Usuário"
-                            >
-                              <Edit3 className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => handleOpenResetPass(u)}
-                              className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-yellow-400 hover:text-yellow-300 transition-colors"
-                              title="Redefinir Senha"
-                            >
-                              <Key className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* View Desktop: Table */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-left text-sm text-gray-300">
+                  <thead className="bg-gray-900/60 text-xs font-bold uppercase tracking-wider text-gray-400 border-b border-gray-800">
+                    <tr>
+                      <th className="px-6 py-4">Usuário / Nome</th>
+                      <th className="px-6 py-4">Perfil</th>
+                      <th className="px-6 py-4">Status</th>
+                      <th className="px-6 py-4 text-right">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-800/60">
+                    {usuarios.map((u) => {
+                      const isSelf = u.idUsuario === currentUser.idUsuario;
+                      return (
+                        <tr key={u.idUsuario} className="hover:bg-gray-800/40 transition-colors">
+                          <td className="px-6 py-4">
+                            <div className="font-bold text-white text-base flex items-center gap-2">
+                              <span>{u.nome}</span>
+                              {isSelf && (
+                                <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-yellow-400/20 text-yellow-400 border border-yellow-400/30">
+                                  Você
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-400 font-mono mt-0.5">
+                              @{u.usuario}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            {u.perfil === 'ADMIN' ? (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                                <Shield className="w-3.5 h-3.5" />
+                                ADMINISTRADOR
+                              </span>
+                            ) : u.perfil === 'ENCARREGADO' ? (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+                                ENCARREGADO
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                                <ShieldAlert className="w-3.5 h-3.5" />
+                                TÉCNICO TST
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                            {u.ativo !== false ? (
+                              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-400">
+                                <CheckCircle className="w-4 h-4" />
+                                Ativo
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-400">
+                                <XCircle className="w-4 h-4" />
+                                Inativo
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => handleOpenEdit(u)}
+                                className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
+                                title="Editar Usuário"
+                              >
+                                <Edit3 className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => handleOpenResetPass(u)}
+                                className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-yellow-400 hover:text-yellow-300 transition-colors"
+                                title="Redefinir Senha"
+                              >
+                                <Key className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>

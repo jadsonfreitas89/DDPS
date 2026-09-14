@@ -28,6 +28,8 @@ export interface Participante {
   assinatura: string; // Base64 data URL
   cargo?: string;
   horaAssinatura?: string;
+  ausente?: boolean;
+  motivoAusencia?: string;
 }
 
 export interface DDS {
@@ -79,4 +81,5 @@ export type ScreenView =
   | 'visualizar_dds'
   | 'lista_dds'
   | 'funcionarios'
-  | 'usuarios';
+  | 'usuarios'
+  | 'consultar_semanas';

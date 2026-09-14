@@ -262,80 +262,146 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
             <p className="text-xs text-gray-400 mt-1">Tente buscar por outro termo ou cadastre um novo colaborador.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead className="bg-gray-50 text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-200">
-                <tr>
-                  <th className="px-6 py-4">Matrícula / ID</th>
-                  <th className="px-6 py-4">Nome do Colaborador</th>
-                  <th className="px-6 py-4">Função / Cargo</th>
-                  <th className="px-6 py-4">Status</th>
-                  <th className="px-6 py-4 text-right">Ações</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 text-sm">
-                {filteredFuncionarios.map((func) => {
-                  const id = func.idFuncionario || func.id;
-                  const isAtivo = func.ativo === true || func.ativo === 'SIM' || func.ativo === 'true';
-                  return (
-                    <tr key={id} className="hover:bg-gray-50/80 transition-colors">
-                      <td className="px-6 py-4 font-mono font-bold text-gray-600">{id}</td>
-                      <td className="px-6 py-4 font-bold text-gray-900">{func.nome}</td>
-                      <td className="px-6 py-4 text-gray-600">{func.funcao || func.cargo || 'Colaborador'}</td>
-                      <td className="px-6 py-4">
-                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold uppercase ${
-                          isAtivo ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
-                        }`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${isAtivo ? 'bg-green-600' : 'bg-gray-400'}`}></span>
-                          {isAtivo ? 'Ativo' : 'Inativo'}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          {/* Edit button */}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditFuncionario(func);
-                              setEditNome(func.nome);
-                              setEditFuncao(func.funcao || func.cargo || '');
-                            }}
-                            className="p-2 rounded-xl text-gray-600 hover:text-yellow-700 hover:bg-yellow-50 transition-colors"
-                            title="Editar colaborador"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-
-                          {/* Toggle Status (Inativar/Reativar) */}
-                          <button
-                            type="button"
-                            onClick={() => handleToggleStatus(func)}
-                            className={`p-2 rounded-xl transition-colors ${
-                              isAtivo 
-                                ? 'text-amber-600 hover:bg-amber-50' 
-                                : 'text-green-600 hover:bg-green-50'
-                            }`}
-                            title={isAtivo ? 'Inativar colaborador' : 'Reativar colaborador'}
-                          >
-                            {isAtivo ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
-                          </button>
-
-                          {/* Delete */}
-                          <button
-                            type="button"
-                            onClick={() => handleExcluir(func)}
-                            className="p-2 rounded-xl text-red-600 hover:bg-red-50 transition-colors"
-                            title="Excluir / Inativar com segurança"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+          <div>
+            {/* View Mobile: Cards */}
+            <div className="block md:hidden divide-y divide-gray-100">
+              {filteredFuncionarios.map((func) => {
+                const id = func.idFuncionario || func.id;
+                const isAtivo = func.ativo === true || func.ativo === 'SIM' || func.ativo === 'true';
+                return (
+                  <div key={id} className="p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md">
+                            {id}
+                          </span>
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                            isAtivo ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
+                          }`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${isAtivo ? 'bg-green-600' : 'bg-gray-400'}`}></span>
+                            {isAtivo ? 'Ativo' : 'Inativo'}
+                          </span>
                         </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        <h4 className="font-bold text-gray-900 text-base mt-1">{func.nome}</h4>
+                        <p className="text-xs text-gray-500">{func.funcao || func.cargo || 'Colaborador'}</p>
+                      </div>
+
+                      {/* Botões de Ação no Mobile */}
+                      <div className="flex items-center gap-1 shrink-0 bg-gray-50 p-1 rounded-2xl border border-gray-100">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditFuncionario(func);
+                            setEditNome(func.nome);
+                            setEditFuncao(func.funcao || func.cargo || '');
+                          }}
+                          className="p-2.5 rounded-xl text-gray-700 hover:bg-yellow-100 transition-colors"
+                          title="Editar colaborador"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleStatus(func)}
+                          className={`p-2.5 rounded-xl transition-colors ${
+                            isAtivo ? 'text-amber-600 hover:bg-amber-100' : 'text-green-600 hover:bg-green-100'
+                          }`}
+                          title={isAtivo ? 'Inativar' : 'Reativar'}
+                        >
+                          {isAtivo ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleExcluir(func)}
+                          className="p-2.5 rounded-xl text-red-600 hover:bg-red-100 transition-colors"
+                          title="Excluir"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* View Desktop: Tabela */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-gray-50 text-xs font-bold uppercase tracking-wider text-gray-500 border-b border-gray-200">
+                  <tr>
+                    <th className="px-6 py-4">Matrícula / ID</th>
+                    <th className="px-6 py-4">Nome do Colaborador</th>
+                    <th className="px-6 py-4">Função / Cargo</th>
+                    <th className="px-6 py-4">Status</th>
+                    <th className="px-6 py-4 text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 text-sm">
+                  {filteredFuncionarios.map((func) => {
+                    const id = func.idFuncionario || func.id;
+                    const isAtivo = func.ativo === true || func.ativo === 'SIM' || func.ativo === 'true';
+                    return (
+                      <tr key={id} className="hover:bg-gray-50/80 transition-colors">
+                        <td className="px-6 py-4 font-mono font-bold text-gray-600">{id}</td>
+                        <td className="px-6 py-4 font-bold text-gray-900">{func.nome}</td>
+                        <td className="px-6 py-4 text-gray-600">{func.funcao || func.cargo || 'Colaborador'}</td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold uppercase ${
+                            isAtivo ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
+                          }`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${isAtivo ? 'bg-green-600' : 'bg-gray-400'}`}></span>
+                            {isAtivo ? 'Ativo' : 'Inativo'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {/* Edit button */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditFuncionario(func);
+                                setEditNome(func.nome);
+                                setEditFuncao(func.funcao || func.cargo || '');
+                              }}
+                              className="p-2 rounded-xl text-gray-600 hover:text-yellow-700 hover:bg-yellow-50 transition-colors"
+                              title="Editar colaborador"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+
+                            {/* Toggle Status (Inativar/Reativar) */}
+                            <button
+                              type="button"
+                              onClick={() => handleToggleStatus(func)}
+                              className={`p-2 rounded-xl transition-colors ${
+                                isAtivo 
+                                  ? 'text-amber-600 hover:bg-amber-50' 
+                                  : 'text-green-600 hover:bg-green-50'
+                              }`}
+                              title={isAtivo ? 'Inativar colaborador' : 'Reativar colaborador'}
+                            >
+                              {isAtivo ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
+                            </button>
+
+                            {/* Delete */}
+                            <button
+                              type="button"
+                              onClick={() => handleExcluir(func)}
+                              className="p-2 rounded-xl text-red-600 hover:bg-red-50 transition-colors"
+                              title="Excluir / Inativar com segurança"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>

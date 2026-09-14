@@ -45,7 +45,7 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
 
     // Dimensões visuais em CSS
     const width = Math.floor(rect.width);
-    const height = Math.floor(Math.max(rect.height, 280));
+    const height = Math.floor(Math.max(rect.height, 180));
 
     // Se já havia desenho, captura snapshot antes de redimensionar o buffer interno
     let prevDataUrl: string | null = null;
@@ -286,7 +286,7 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
 
           <div
             ref={containerRef}
-            className="relative w-full h-[280px] sm:h-[320px] bg-gray-50 rounded-2xl border-2 border-dashed border-gray-300 overflow-hidden touch-none flex flex-col justify-end select-none"
+            className="relative w-full h-[200px] sm:h-[260px] md:h-[300px] bg-gray-50 rounded-2xl border-2 border-dashed border-gray-300 overflow-hidden touch-none flex flex-col justify-end select-none"
             style={{ touchAction: 'none' }}
           >
             {/* Linha guia de assinatura como em papel de presença */}
