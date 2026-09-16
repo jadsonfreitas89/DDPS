@@ -174,6 +174,8 @@ export default function App() {
     text: string;
   } | null>(null);
 
+  const [isRemoteDraftLoaded, setIsRemoteDraftLoaded] = useState(false);
+
   // ==========================================================
   // RECUPERA RASCUNHO
   // ==========================================================
@@ -224,6 +226,10 @@ export default function App() {
   // ==========================================================
 
   useEffect(() => {
+    // Só permite salvar ou limpar o rascunho APÓS o carregamento inicial do rascunho remoto terminar.
+    // Isso evita o bug de apagar o rascunho do servidor na inicialização do app.
+    if (!isRemoteDraftLoaded) return;
+
     if (
       activeDDS &&
       currentScreen !== 'inicio'
@@ -275,7 +281,8 @@ export default function App() {
   }, [
     activeDDS,
     participantesMap,
-    currentScreen
+    currentScreen,
+    isRemoteDraftLoaded
   ]);
 
   // ==========================================================
@@ -383,6 +390,8 @@ export default function App() {
       }
     } catch (e) {
       console.warn('[DDPS] Erro ao carregar rascunho remoto no login:', e);
+    } finally {
+      setIsRemoteDraftLoaded(true);
     }
 
     setIsLoading(false);
@@ -394,6 +403,7 @@ export default function App() {
     setCurrentScreen('inicio');
     setActiveDDS(null);
     setParticipantesMap({});
+    setIsRemoteDraftLoaded(false);
   };
 
   useEffect(() => {
@@ -418,13 +428,17 @@ export default function App() {
             }
           } catch (e) {
             console.warn('[DDPS] Erro ao carregar rascunho remoto na inicialização:', e);
+          } finally {
+            setIsRemoteDraftLoaded(true);
           }
         } else {
           setCurrentUser(null);
+          setIsRemoteDraftLoaded(true);
         }
       } catch (err) {
         console.warn('Erro ao verificar sessão:', err);
         setCurrentUser(null);
+        setIsRemoteDraftLoaded(true);
       } finally {
         setIsCheckingAuth(false);
         setIsLoading(false);
