@@ -4,6 +4,7 @@ import { Card } from './Card';
 import { Button } from './Button';
 import { EmociogramaSelector } from './EmociogramaSelector';
 import { User, CheckCircle2, PenLine, RotateCcw, UserX, AlertCircle } from 'lucide-react';
+import { sanitizeMotivoAusencia } from '../utils/absenceUtils';
 
 const MOTIVOS_PADRAO = ['Atestado', 'ASO', 'Falta', 'Férias', 'Folga', 'Outros'];
 
@@ -25,27 +26,28 @@ export const EmployeeCard: React.FC<EmployeeCardProps> = ({
   isCurrent = true
 }) => {
   const isAusente = Boolean(participanteData?.ausente);
-  const motivoAtual = participanteData?.motivoAusencia || '';
+  const motivoAtual = sanitizeMotivoAusencia(participanteData?.motivoAusencia || '');
   const isSigned = !isAusente && Boolean(participanteData?.assinatura);
   const currentEmociograma = participanteData?.emociograma;
 
-  // Se o motivo atual for diferente das opções padrão, é "Outros"
-  const isCustomMotivo = isAusente && motivoAtual && !['Atestado', 'ASO', 'Falta', 'Férias', 'Folga'].includes(motivoAtual);
-  const [selectedMotivoOption, setSelectedMotivoOption] = useState<string>(
-    isCustomMotivo ? 'Outros' : (motivoAtual || 'Atestado')
-  );
-  const [customTextValue, setCustomTextValue] = useState<string>(isCustomMotivo ? motivoAtual : '');
+  // Estado local para a opção selecionada ('Atestado', 'ASO', 'Falta', 'Férias', 'Folga', 'Outros')
+  const [selectedMotivoOption, setSelectedMotivoOption] = useState<string>(() => {
+    const isCustom = isAusente && motivoAtual && !['Atestado', 'ASO', 'Falta', 'Férias', 'Folga'].includes(motivoAtual);
+    return isCustom ? 'Outros' : (motivoAtual || 'Atestado');
+  });
 
+  // Estado local para o texto personalizado de "Outros"
+  const [customTextValue, setCustomTextValue] = useState<string>(() => {
+    const isCustom = isAusente && motivoAtual && !['Atestado', 'ASO', 'Falta', 'Férias', 'Folga'].includes(motivoAtual);
+    return isCustom ? (motivoAtual === 'Outros' ? '' : motivoAtual) : '';
+  });
+
+  // Recarrega os estados locais apenas quando muda o colaborador ativo
   useEffect(() => {
-    if (isAusente) {
-      if (isCustomMotivo) {
-        setSelectedMotivoOption('Outros');
-        setCustomTextValue(motivoAtual);
-      } else if (motivoAtual) {
-        setSelectedMotivoOption(motivoAtual);
-      }
-    }
-  }, [isAusente, motivoAtual]);
+    const isCustom = isAusente && motivoAtual && !['Atestado', 'ASO', 'Falta', 'Férias', 'Folga'].includes(motivoAtual);
+    setSelectedMotivoOption(isCustom ? 'Outros' : (motivoAtual || 'Atestado'));
+    setCustomTextValue(isCustom ? (motivoAtual === 'Outros' ? '' : motivoAtual) : '');
+  }, [funcionario.idFuncionario]);
 
   // Iniciais do trabalhador
   const initials = funcionario.nome
@@ -58,8 +60,9 @@ export const EmployeeCard: React.FC<EmployeeCardProps> = ({
 
   const handleToggleAusente = (checked: boolean) => {
     if (checked) {
-      const defaultMotivo = selectedMotivoOption === 'Outros' ? (customTextValue || 'Outros') : selectedMotivoOption;
-      onAbsenceChange(true, defaultMotivo || 'Atestado');
+      const txt = selectedMotivoOption === 'Outros' ? customTextValue : selectedMotivoOption;
+      const cleanMotivo = sanitizeMotivoAusencia(txt) || 'Atestado';
+      onAbsenceChange(true, cleanMotivo);
     } else {
       onAbsenceChange(false, '');
     }
@@ -68,7 +71,8 @@ export const EmployeeCard: React.FC<EmployeeCardProps> = ({
   const handleSelectMotivo = (motivo: string) => {
     setSelectedMotivoOption(motivo);
     if (motivo === 'Outros') {
-      onAbsenceChange(true, customTextValue || 'Outros');
+      setCustomTextValue('');
+      onAbsenceChange(true, '');
     } else {
       onAbsenceChange(true, motivo);
     }
@@ -76,7 +80,8 @@ export const EmployeeCard: React.FC<EmployeeCardProps> = ({
 
   const handleCustomTextChange = (txt: string) => {
     setCustomTextValue(txt);
-    onAbsenceChange(true, txt.trim() || 'Outros');
+    const cleanMotivo = sanitizeMotivoAusencia(txt);
+    onAbsenceChange(true, cleanMotivo);
   };
 
   return (

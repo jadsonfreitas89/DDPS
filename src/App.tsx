@@ -46,6 +46,7 @@ import { UserManagementView } from './views/UserManagementView';
 import { ConsultarSemanasView } from './views/ConsultarSemanasView';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { getSemanaId, pertenceASemana } from './utils/weekUtils';
+import { sanitizeMotivoAusencia } from './utils/absenceUtils';
 
 import {
   CheckCircle,
@@ -223,37 +224,54 @@ export default function App() {
   // ==========================================================
 
   useEffect(() => {
-
     if (
       activeDDS &&
       currentScreen !== 'inicio'
     ) {
+      const draftData = JSON.stringify({
+        activeDDS,
+        participantesMap,
+        currentScreen
+      });
 
+      // 1. Salva localmente de forma instantânea
       try {
-
         localStorage.setItem(
           getDraftStorageKey(),
-          JSON.stringify({
-            activeDDS,
-            participantesMap,
-            currentScreen
-          })
+          draftData
         );
-
       } catch {
-
         // Storage quota
       }
+
+      // 2. Salva remotamente (debounced) para multi-dispositivo
+      const timer = setTimeout(async () => {
+        try {
+          await api.salvarRascunhoDDS(draftData);
+        } catch (e) {
+          console.warn('[DDPS] Erro ao sincronizar rascunho remoto:', e);
+        }
+      }, 2500);
+
+      return () => clearTimeout(timer);
 
     } else if (
       currentScreen === 'inicio'
     ) {
-
       localStorage.removeItem(
         getDraftStorageKey()
       );
-    }
 
+      // Limpa rascunho remoto ao concluir/cancelar o DDS
+      const limparRascunhoRemoto = async () => {
+        try {
+          await api.salvarRascunhoDDS('');
+        } catch (e) {
+          console.warn('[DDPS] Erro ao limpar rascunho remoto:', e);
+        }
+      };
+      limparRascunhoRemoto();
+    }
   }, [
     activeDDS,
     participantesMap,
@@ -351,6 +369,22 @@ export default function App() {
     setCurrentUser(user);
     setIsLoading(true);
     await loadInitialData();
+    
+    // Tenta carregar rascunho remoto sincronizado (multi-dispositivo)
+    try {
+      const backendDraftRes = await api.obterRascunhoDDS();
+      if (backendDraftRes.sucesso && backendDraftRes.rascunho) {
+        const parsed = JSON.parse(backendDraftRes.rascunho);
+        if (parsed.activeDDS && parsed.currentScreen && parsed.currentScreen !== 'inicio') {
+          setActiveDDS(parsed.activeDDS);
+          setParticipantesMap(parsed.participantesMap || {});
+          setCurrentScreen(parsed.currentScreen);
+        }
+      }
+    } catch (e) {
+      console.warn('[DDPS] Erro ao carregar rascunho remoto no login:', e);
+    }
+
     setIsLoading(false);
   };
 
@@ -370,6 +404,21 @@ export default function App() {
         if (res.sucesso && res.usuario) {
           setCurrentUser(res.usuario);
           await loadInitialData();
+
+          // Tenta carregar rascunho remoto sincronizado (multi-dispositivo)
+          try {
+            const backendDraftRes = await api.obterRascunhoDDS();
+            if (backendDraftRes.sucesso && backendDraftRes.rascunho) {
+              const parsed = JSON.parse(backendDraftRes.rascunho);
+              if (parsed.activeDDS && parsed.currentScreen && parsed.currentScreen !== 'inicio') {
+                setActiveDDS(parsed.activeDDS);
+                setParticipantesMap(parsed.participantesMap || {});
+                setCurrentScreen(parsed.currentScreen);
+              }
+            }
+          } catch (e) {
+            console.warn('[DDPS] Erro ao carregar rascunho remoto na inicialização:', e);
+          }
         } else {
           setCurrentUser(null);
         }
@@ -595,25 +644,36 @@ export default function App() {
 
     try {
       // ----------------------------------------------------
-      // PEGA SOMENTE OS PARTICIPANTES ASSINADOS
+      // PEGA OS PARTICIPANTES CONCLUÍDOS (ASSINADOS OU AUSENTES COM MOTIVO)
       // ----------------------------------------------------
-      const assinados = (
+      const concluidos = (
         Object.values(participantesMap) as Participante[]
-      ).filter(
-        (p) => Boolean(p.assinatura && p.assinatura.length > 50)
-      );
+      ).filter((p) => {
+        if (p.ausente) {
+          return Boolean(p.motivoAusencia && p.motivoAusencia.trim().length > 0);
+        }
+        return Boolean(p.assinatura && p.assinatura.length > 50);
+      }).map((p) => {
+        if (p.ausente) {
+          return {
+            ...p,
+            motivoAusencia: sanitizeMotivoAusencia(p.motivoAusencia) || 'Atestado'
+          };
+        }
+        return p;
+      });
 
-      if (assinados.length === 0) {
-        throw new Error('É necessário coletar ao menos 1 assinatura para finalizar os participantes.');
+      if (concluidos.length === 0) {
+        throw new Error('É necessário ao menos 1 participante (assinado ou ausente registrado) para salvar.');
       }
 
       console.log('================================================');
       console.log('[DDPS APP] INICIANDO SALVAMENTO DE PARTICIPANTES');
       console.log('[DDPS APP] ID_DDS:', currentIdDDS);
-      console.log('[DDPS APP] Total assinados:', assinados.length);
+      console.log('[DDPS APP] Total participantes:', concluidos.length);
 
-      // a) Salvar todos os participantes e assinaturas
-      const resultado = await api.salvarParticipantes(currentIdDDS, assinados);
+      // a) Salvar todos os participantes (assinados e ausentes com motivo)
+      const resultado = await api.salvarParticipantes(currentIdDDS, concluidos);
 
       console.log('[DDPS APP] RESULTADO SALVAR PARTICIPANTES:', resultado);
 
@@ -633,7 +693,7 @@ export default function App() {
       }
 
       showToast(
-        `${assinados.length} participante(s) gravado(s) com sucesso! Avançando para a conferência.`,
+        `${concluidos.length} participante(s) gravado(s) com sucesso! Avançando para a conferência.`,
         'success'
       );
 
@@ -682,15 +742,20 @@ export default function App() {
 
     try {
       const allParts = Object.values(participantesMap) as Participante[];
-      const participantesFinal = allParts.filter(
-        (p) => Boolean(p.assinatura && p.assinatura.length > 50)
-      );
+      const participantesFinal = allParts.filter((p) => {
+        if (p.ausente) {
+          return Boolean(p.motivoAusencia && p.motivoAusencia.trim().length > 0);
+        }
+        return Boolean(p.assinatura && p.assinatura.length > 50);
+      });
 
       const payloadParts = participantesFinal.map((p) => ({
         idFuncionario: p.idFuncionario,
         nome: p.nome,
-        emociograma: p.emociograma,
-        assinatura: p.assinatura
+        emociograma: p.ausente ? '' : p.emociograma,
+        assinatura: p.ausente ? '' : p.assinatura,
+        ausente: p.ausente ? 'SIM' : 'NAO',
+        motivoAusencia: p.ausente ? (sanitizeMotivoAusencia(p.motivoAusencia) || 'Atestado') : ''
       }));
 
       // 1 Única Chamada HTTP Consolidada para salvar participantes e finalizar

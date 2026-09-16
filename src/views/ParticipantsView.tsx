@@ -6,6 +6,7 @@ import { ProgressIndicator } from '../components/ProgressIndicator';
 import { SignaturePad } from '../components/SignaturePad';
 import { Button } from '../components/Button';
 import { CheckCheck, AlertCircle, ArrowLeft, Grid, ChevronDown, Check } from 'lucide-react';
+import { sanitizeMotivoAusencia } from '../utils/absenceUtils';
 
 interface ParticipantsViewProps {
   dds: DDS;
@@ -80,12 +81,13 @@ export const ParticipantsView: React.FC<ParticipantsViewProps> = ({
 
   const handleAbsenceChange = (ausente: boolean, motivoAusencia?: string) => {
     if (ausente) {
+      const cleanMotivo = sanitizeMotivoAusencia(motivoAusencia) || 'Atestado';
       onUpdateParticipante(currentFuncId, {
         idFuncionario: currentFuncId,
         nome: currentFuncionario.nome,
         cargo: currentFuncionario.cargo,
         ausente: true,
-        motivoAusencia: motivoAusencia || 'Atestado',
+        motivoAusencia: cleanMotivo,
         assinatura: '',
         emociograma: 'BOM'
       });

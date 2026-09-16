@@ -3,6 +3,7 @@ import { DDPSStatus, DDS, Participante } from '../types';
 import { api } from '../services/api';
 import { formatarDataApenas, formatarHoraApenas } from './dateFormatter';
 import { getSundayOfWeek, getSemanaId, getSemanaNumero, pertenceASemana } from './weekUtils';
+import { sanitizeMotivoAusencia } from './absenceUtils';
 
 export interface DiaSemanaConfig {
   nome: string;
@@ -341,7 +342,7 @@ export async function carregarDadosSemanaAcumulados(
       }
 
       const isAusente = p.ausente === true || String(p.ausente || '').toUpperCase() === 'SIM';
-      const motivo = isAusente ? String(p.motivoAusencia || '').trim() : '';
+      const motivo = isAusente ? (sanitizeMotivoAusencia(p.motivoAusencia) || 'Atestado') : '';
 
       // Registra para o dia específico (diaIndex)
       entry.dias[diaIndex] = {
@@ -862,11 +863,11 @@ export async function gerarPDFSemanalDDPS(
       doc.setFillColor(255, 255, 255);
       doc.rect(rubricaX, rowY, rubricaColW, partRowH, 'FD');
 
-      if (isAusente && reg?.motivoAusencia) {
+      if (isAusente) {
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(4.8);
         doc.setTextColor(180, 0, 0);
-        const txtMotivo = reg.motivoAusencia.trim();
+        const txtMotivo = sanitizeMotivoAusencia(reg?.motivoAusencia) || 'Ausente';
         const line = doc.splitTextToSize(txtMotivo, rubricaColW - 0.5)[0] || txtMotivo;
         doc.text(line, rubricaX + rubricaColW / 2, rowY + 3.1, { align: 'center' });
         doc.setTextColor(0, 0, 0);

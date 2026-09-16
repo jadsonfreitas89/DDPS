@@ -90,7 +90,9 @@ function instalarDDPS() {
       'NOME',
       'EMOCIOGRAMA',
       'ASSINATURA',
-      'DATA_HORA'
+      'DATA_HORA',
+      'AUSENTE',
+      'MOTIVO_AUSENCIA'
     ]
   );
 
@@ -116,6 +118,7 @@ function instalarDDPS() {
       'SENHA_HASH',
       'PERFIL',
       'ATIVO',
+      'PRIMEIRO_ACESSO',
       'DATA_CRIACAO',
       'DATA_ATUALIZACAO'
     ]
@@ -378,6 +381,11 @@ function doGet(e) {
           dados: func
         });
       }
+
+      if (acao === 'obterRascunhoDDS') {
+        exigirAutenticacao(token);
+        return respostaJSON(obterRascunhoDDS());
+      }
     }
 
     return respostaJSON({
@@ -531,6 +539,10 @@ function doPost(e) {
       case 'deletarDDS':
         exigirAutenticacao(token);
         return respostaJSON(deletarDDS(dados.idDDS));
+
+      case 'salvarRascunhoDDS':
+        exigirAutenticacao(token);
+        return respostaJSON(salvarRascunhoDDS(dados.rascunho));
 
       default:
         return respostaJSON({
@@ -2232,7 +2244,9 @@ function TESTAR_DDS() {
 function registrarParticipante(
   idDDS,
   idFuncionario,
-  emociograma
+  emociograma,
+  ausente,
+  motivoAusencia
 ) {
 
   idDDS =
@@ -2263,13 +2277,6 @@ function registrarParticipante(
 
     throw new Error(
       'Informe o ID_FUNCIONARIO.'
-    );
-  }
-
-  if (!emociograma) {
-
-    throw new Error(
-      'Emociograma inválido. Use BOM, REGULAR ou RUIM.'
     );
   }
 
@@ -2346,8 +2353,12 @@ function registrarParticipante(
     );
   }
 
+  garantirSchemaParticipantes(sheet);
+
   var ultimaLinha =
     sheet.getLastRow();
+
+  var colCount = Math.max(8, sheet.getLastColumn());
 
   var linhaExistente =
     null;
@@ -2365,7 +2376,7 @@ function registrarParticipante(
           2,
           1,
           ultimaLinha - 1,
-          6
+          colCount
         )
         .getValues();
 
@@ -2403,6 +2414,14 @@ function registrarParticipante(
 
   var agora =
     new Date();
+
+  var isAusente = (
+    ausente === true ||
+    String(ausente || '').trim().toUpperCase() === 'SIM' ||
+    String(ausente || '').trim().toLowerCase() === 'true'
+  );
+  var ausenteVal = isAusente ? 'SIM' : 'NAO';
+  var motivoVal = isAusente ? normalizarMotivoAusencia(motivoAusencia) : '';
 
 
   /* ----------------------------------------------------------
@@ -2454,15 +2473,17 @@ function registrarParticipante(
         linhaExistente,
         1,
         1,
-        6
+        8
       )
       .setValues([[
         idDDS,
         funcionario.idFuncionario,
         funcionario.nome,
-        emociograma,
+        emociograma || 'BOM',
         assinaturaExistente,
-        agora
+        agora,
+        ausenteVal,
+        motivoVal
       ]]);
 
 
@@ -2477,22 +2498,6 @@ function registrarParticipante(
 
 
     SpreadsheetApp.flush();
-
-
-    Logger.log(
-      'PARTICIPANTE ATUALIZADO -> ' +
-      idDDS +
-      ' | ' +
-      funcionario.idFuncionario +
-      ' | ' +
-      emociograma +
-      ' | assinatura preservada=' +
-      (
-        assinaturaExistente
-          ? 'SIM'
-          : 'NÃO'
-      )
-    );
 
 
     return {
@@ -2512,10 +2517,16 @@ function registrarParticipante(
         funcionario.nome,
 
       emociograma:
-        emociograma,
+        emociograma || 'BOM',
 
       assinatura:
-        assinaturaExistente
+        assinaturaExistente,
+
+      ausente:
+        ausenteVal,
+
+      motivoAusencia:
+        motivoVal
     };
   }
 
@@ -2532,11 +2543,15 @@ function registrarParticipante(
 
     funcionario.nome,
 
-    emociograma,
+    emociograma || 'BOM',
 
     '',
 
-    agora
+    agora,
+
+    ausenteVal,
+
+    motivoVal
 
   ]);
 
@@ -2558,18 +2573,6 @@ function registrarParticipante(
   SpreadsheetApp.flush();
 
 
-  Logger.log(
-    'PARTICIPANTE REGISTRADO -> ' +
-    idDDS +
-    ' | ' +
-    funcionario.idFuncionario +
-    ' | ' +
-    funcionario.nome +
-    ' | ' +
-    emociograma
-  );
-
-
   return {
 
     sucesso: true,
@@ -2587,10 +2590,16 @@ function registrarParticipante(
       funcionario.nome,
 
     emociograma:
-      emociograma,
+      emociograma || 'BOM',
 
     assinatura:
-      ''
+      '',
+
+    ausente:
+      ausenteVal,
+
+    motivoAusencia:
+      motivoVal
   };
 }
 
@@ -2666,6 +2675,29 @@ function salvarDDSCompleto(dados) {
 
 
 /* ============================================================
+ * SUPORTE A AUSÊNCIAS
+ * ============================================================ */
+
+function normalizarAusente(val) {
+  if (val === true) return 'SIM';
+  if (val === false) return 'NAO';
+  var str = String(val || '').trim().toUpperCase();
+  if (str === 'SIM' || str === 'TRUE' || str === '1' || str === 'VERDADEIRO') return 'SIM';
+  if (str === 'NÃO' || str === 'NAO' || str === 'FALSE' || str === '0' || str === 'FALSO') return 'NAO';
+  return 'NAO';
+}
+
+function normalizarMotivoAusencia(motivo) {
+  if (!motivo) return '';
+  var str = String(motivo).trim();
+  if (/^outros$/i.test(str)) return 'Outros';
+  str = str.replace(/^outros\s*[-:\s]+\s*/i, '').trim();
+  if (/^outros$/i.test(str)) return 'Outros';
+  return str;
+}
+
+
+/* ============================================================
  * REGISTRAR PARTICIPANTES EM LOTE (OTIMIZADO EM MEMÓRIA)
  * ============================================================ */
 
@@ -2712,12 +2744,14 @@ function registrarParticipantesEmLote(
     Logger.log('Erro ao carregar mapa de funcionários: ' + errFunc.message);
   }
 
-  // 1. Carregar aba PARTICIPANTES
+  // 1. Carregar aba PARTICIPANTES e garantir Schema (8 colunas)
   var sheetPart = ss.getSheetByName(DDPS_ABAS.PARTICIPANTES);
   if (!sheetPart) throw new Error('Aba PARTICIPANTES não encontrada.');
+  garantirSchemaParticipantes(sheetPart);
 
   var lastRowPart = sheetPart.getLastRow();
-  var dadosPart = lastRowPart >= 2 ? sheetPart.getRange(2, 1, lastRowPart - 1, 6).getValues() : [];
+  var colCountPart = Math.max(8, sheetPart.getLastColumn());
+  var dadosPart = lastRowPart >= 2 ? sheetPart.getRange(2, 1, lastRowPart - 1, colCountPart).getValues() : [];
 
   // Mapeia linhas existentes em PARTICIPANTES por idFuncionario
   var partMapIndex = {};
@@ -2772,19 +2806,56 @@ function registrarParticipantesEmLote(
       }
     }
 
+    var temAusenciaNoPayload = (
+      p.hasOwnProperty('ausente') ||
+      p.hasOwnProperty('AUSENTE') ||
+      p.hasOwnProperty('motivoAusencia') ||
+      p.hasOwnProperty('motivo') ||
+      p.hasOwnProperty('MOTIVO_AUSENCIA')
+    );
+
+    var rawAusente = (p.ausente !== undefined) ? p.ausente : p.AUSENTE;
+    var rawMotivo = p.motivoAusencia || p.motivo || p.MOTIVO_AUSENCIA || '';
+
+    var isAusente = (
+      rawAusente === true ||
+      String(rawAusente || '').trim().toUpperCase() === 'SIM' ||
+      String(rawAusente || '').trim().toLowerCase() === 'true'
+    );
+
+    var ausenteVal = isAusente ? 'SIM' : 'NAO';
+    var motivoVal = isAusente ? normalizarMotivoAusencia(rawMotivo) : '';
+
     // A) PARTICIPANTES
-    // Colunas: [0] ID_DDS | [1] ID_FUNCIONARIO | [2] NOME | [3] EMOCIOGRAMA | [4] ASSINATURA | [5] DATA_HORA
+    // Colunas: [0] ID_DDS | [1] ID_FUNCIONARIO | [2] NOME | [3] EMOCIOGRAMA | [4] ASSINATURA | [5] DATA_HORA | [6] AUSENTE | [7] MOTIVO_AUSENCIA
     if (partMapIndex.hasOwnProperty(idFunc)) {
       var rowIdx = partMapIndex[idFunc];
       if (nomeFunc) dadosPart[rowIdx][2] = nomeFunc;
-      dadosPart[rowIdx][3] = emociogramaText;
+
+      // Preserva emociograma existente se payload não enviou novo
+      if (emociogramaText) {
+        dadosPart[rowIdx][3] = emociogramaText;
+      }
+
+      // Preserva assinatura existente se payload não enviou nova
       if (assinaturaStr) {
         dadosPart[rowIdx][4] = assinaturaStr;
       }
+
       dadosPart[rowIdx][5] = agora;
+
+      // Atualiza ou preserva Ausência/Motivo
+      if (temAusenciaNoPayload) {
+        dadosPart[rowIdx][6] = ausenteVal;
+        dadosPart[rowIdx][7] = motivoVal;
+      } else {
+        if (!dadosPart[rowIdx][6]) dadosPart[rowIdx][6] = 'NAO';
+        if (dadosPart[rowIdx][7] === undefined) dadosPart[rowIdx][7] = '';
+      }
+
       atualizados++;
     } else {
-      var novaLinhaP = [idDDS, idFunc, nomeFunc, emociogramaText, assinaturaStr, agora];
+      var novaLinhaP = [idDDS, idFunc, nomeFunc, emociogramaText, assinaturaStr, agora, ausenteVal, motivoVal];
       dadosPart.push(novaLinhaP);
       partMapIndex[idFunc] = dadosPart.length - 1;
       criados++;
@@ -2808,9 +2879,9 @@ function registrarParticipantesEmLote(
 
   var tProc = new Date().getTime();
 
-  // 4. Gravação em lote no Google Sheets (1 única gravação por aba)
+  // 4. Gravação em lote no Google Sheets (8 colunas)
   if (dadosPart.length > 0) {
-    sheetPart.getRange(2, 1, dadosPart.length, 6).setValues(dadosPart);
+    sheetPart.getRange(2, 1, dadosPart.length, 8).setValues(dadosPart);
   }
 
   if (dadosAss.length > 0) {
@@ -2818,7 +2889,7 @@ function registrarParticipantesEmLote(
   }
 
   var tFim = new Date().getTime();
-  Logger.log('[PERF LOG] SALVAR PARTICIPANTES EM LOTE FINALIZADO -> Total: ' + (tFim - tInicio) + ' ms | Leitura: ' + (tLeitura - tInicio) + ' ms | Proc: ' + (tProc - tLeitura) + ' ms | Gravação Lote: ' + (tFim - tProc) + ' ms | Criados: ' + criados + ' | Atualizados: ' + atualizados);
+  Logger.log('[PERF LOG] SALVAR PARTICIPANTES EM LOTE FINALIZADO -> Total: ' + (tFim - tInicio) + ' ms | Criados: ' + criados + ' | Atualizados: ' + atualizados);
 
   return {
     sucesso: true,
@@ -2838,106 +2909,58 @@ function obterParticipante(
   idDDS,
   idFuncionario
 ) {
-
-  idDDS =
-    String(
-      idDDS || ''
-    ).trim();
-
-  idFuncionario =
-    String(
-      idFuncionario || ''
-    )
-    .trim()
-    .toUpperCase();
+  idDDS = String(idDDS || '').trim();
+  idFuncionario = String(idFuncionario || '').trim().toUpperCase();
 
   if (!idDDS) {
-
-    throw new Error(
-      'ID_DDS não informado.'
-    );
+    throw new Error('ID_DDS não informado.');
   }
 
   if (!idFuncionario) {
-
-    throw new Error(
-      'ID_FUNCIONARIO não informado.'
-    );
+    throw new Error('ID_FUNCIONARIO não informado.');
   }
 
-  var ss =
-    SpreadsheetApp
-      .getActiveSpreadsheet();
-
-  var sheet =
-    ss.getSheetByName(
-      DDPS_ABAS.PARTICIPANTES
-    );
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(DDPS_ABAS.PARTICIPANTES);
 
   if (!sheet) {
-
-    throw new Error(
-      'Aba PARTICIPANTES não encontrada.'
-    );
+    throw new Error('Aba PARTICIPANTES não encontrada.');
   }
 
-  var lastRow =
-    sheet.getLastRow();
+  garantirSchemaParticipantes(sheet);
 
+  var lastRow = sheet.getLastRow();
   if (lastRow < 2) {
     return null;
   }
 
-  var dados =
-    sheet
-      .getRange(
-        2,
-        1,
-        lastRow - 1,
-        6
-      )
-      .getValues();
+  var colCount = Math.max(8, sheet.getLastColumn());
+  var dados = sheet.getRange(2, 1, lastRow - 1, colCount).getValues();
 
-  for (
-    var i = 0;
-    i < dados.length;
-    i++
-  ) {
-
-    var linha =
-      dados[i];
+  for (var i = 0; i < dados.length; i++) {
+    var linha = dados[i];
 
     if (
-      String(
-        linha[0] || ''
-      ).trim() === idDDS &&
-
-      String(
-        linha[1] || ''
-      )
-      .trim()
-      .toUpperCase() === idFuncionario
+      String(linha[0] || '').trim() === idDDS &&
+      String(linha[1] || '').trim().toUpperCase() === idFuncionario
     ) {
+      var ausenteRaw = colCount >= 7 ? linha[6] : '';
+      var motivoRaw = colCount >= 8 ? linha[7] : '';
+      var isAusente = (
+        ausenteRaw === true ||
+        String(ausenteRaw || '').trim().toUpperCase() === 'SIM' ||
+        String(ausenteRaw || '').trim().toLowerCase() === 'true'
+      );
 
       return {
-
-        idDDS:
-          linha[0],
-
-        idFuncionario:
-          linha[1],
-
-        nome:
-          linha[2],
-
-        emociograma:
-          linha[3],
-
-        assinatura:
-          linha[4],
-
-        dataHora:
-          linha[5]
+        idDDS: linha[0],
+        idFuncionario: linha[1],
+        nome: linha[2],
+        emociograma: linha[3],
+        assinatura: linha[4],
+        dataHora: linha[5],
+        ausente: isAusente ? 'SIM' : 'NAO',
+        motivoAusencia: isAusente ? normalizarMotivoAusencia(motivoRaw) : ''
       };
     }
   }
@@ -2951,7 +2974,6 @@ function obterParticipante(
  * ============================================================ */
 
 function obterParticipantesDDS(idDDS) {
-
   idDDS = String(idDDS || '').trim();
 
   if (!idDDS) {
@@ -3005,12 +3027,15 @@ function obterParticipantesDDS(idDDS) {
     throw new Error('Aba PARTICIPANTES não encontrada.');
   }
 
+  garantirSchemaParticipantes(sheet);
+
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) {
     return [];
   }
 
-  var dados = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
+  var colCount = Math.max(8, sheet.getLastColumn());
+  var dados = sheet.getRange(2, 1, lastRow - 1, colCount).getValues();
   var participantes = [];
 
   var emociogramaWords = ['BOM', 'REGULAR', 'RUIM', 'OTIMO', 'PESSIMO'];
@@ -3026,6 +3051,15 @@ function obterParticipantesDDS(idDDS) {
     var emoVal = String(linha[3] || '').trim();
     var assVal = String(linha[4] || '').trim();
     var dtVal = linha[5];
+
+    var ausenteRaw = colCount >= 7 ? linha[6] : '';
+    var motivoRaw = colCount >= 8 ? linha[7] : '';
+
+    var isAusente = (
+      ausenteRaw === true ||
+      String(ausenteRaw || '').trim().toUpperCase() === 'SIM' ||
+      String(ausenteRaw || '').trim().toLowerCase() === 'true'
+    );
 
     // Se a coluna [2] for um emociograma ou vazia, repara o nome usando mapFuncionarios
     if (!nomeVal || emociogramaWords.indexOf(nomeVal.toUpperCase()) !== -1) {
@@ -3047,7 +3081,9 @@ function obterParticipantesDDS(idDDS) {
       nome: nomeVal,
       emociograma: emoVal,
       assinatura: assVal,
-      dataHora: dtVal
+      dataHora: dtVal,
+      ausente: isAusente ? 'SIM' : 'NAO',
+      motivoAusencia: isAusente ? normalizarMotivoAusencia(motivoRaw) : ''
     });
   }
 
@@ -4781,11 +4817,31 @@ function TESTAR_IMPLANTACAO() {
 function garantirSchemaParticipantes(sheet) {
   if (!sheet) return;
   var colCount = sheet.getLastColumn();
-  if (colCount < 2) return;
-  
-  var headers = sheet.getRange(1, 1, 1, Math.max(1, colCount)).getValues()[0];
-  var headersUpper = headers.map(function(h) { return String(h).trim().toUpperCase(); });
-  
+
+  if (colCount < 1) {
+    var cabecalhos = [
+      'ID_DDS',
+      'ID_FUNCIONARIO',
+      'NOME',
+      'EMOCIOGRAMA',
+      'ASSINATURA',
+      'DATA_HORA',
+      'AUSENTE',
+      'MOTIVO_AUSENCIA'
+    ];
+    sheet.getRange(1, 1, 1, cabecalhos.length).setValues([cabecalhos]);
+    var cab = sheet.getRange(1, 1, 1, cabecalhos.length);
+    cab.setFontWeight('bold');
+    cab.setHorizontalAlignment('center');
+    sheet.setFrozenRows(1);
+    SpreadsheetApp.flush();
+    return;
+  }
+
+  var maxCol = Math.max(8, colCount);
+  var headers = sheet.getRange(1, 1, 1, maxCol).getValues()[0];
+  var headersUpper = headers.map(function(h) { return String(h || '').trim().toUpperCase(); });
+
   if (headersUpper.indexOf('AUSENTE') === -1) {
     sheet.getRange(1, 7).setValue('AUSENTE');
     sheet.getRange(1, 7).setFontWeight('bold');
@@ -4797,6 +4853,32 @@ function garantirSchemaParticipantes(sheet) {
     sheet.getRange(1, 8).setHorizontalAlignment('center');
   }
   SpreadsheetApp.flush();
+}
+
+function TESTAR_SCHEMA_PARTICIPANTES() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(DDPS_ABAS.PARTICIPANTES);
+
+  if (!sheet) {
+    Logger.log('ERRO: Aba PARTICIPANTES não foi encontrada na planilha ativa.');
+    return;
+  }
+
+  garantirSchemaParticipantes(sheet);
+  SpreadsheetApp.flush();
+
+  var colG1 = String(sheet.getRange(1, 7).getValue() || '').trim();
+  var colH1 = String(sheet.getRange(1, 8).getValue() || '').trim();
+
+  Logger.log('--- DIAGNÓSTICO SCHEMA PARTICIPANTES ---');
+  Logger.log('G1 = ' + colG1);
+  Logger.log('H1 = ' + colH1);
+
+  if (colG1 === 'AUSENTE' && colH1 === 'MOTIVO_AUSENCIA') {
+    Logger.log('SUCESSO: Estrutura verificada e inicializada com sucesso!');
+  } else {
+    Logger.log('ATENÇÃO: Valores de G1/H1 divergentes do esperado.');
+  }
 }
 
 function garantirSchemaAssinaturas(sheet) {
@@ -5098,7 +5180,8 @@ function atualizarDDS(dados) {
 
 function garantirSchemaUsuarios(sheet) {
   if (!sheet) return;
-  var headers = [
+
+  var headersEsperados = [
     'ID_USUARIO',
     'USUARIO',
     'NOME',
@@ -5109,38 +5192,90 @@ function garantirSchemaUsuarios(sheet) {
     'DATA_CRIACAO',
     'DATA_ATUALIZACAO'
   ];
+
   var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+
   if (lastRow < 1) {
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-    sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+    sheet.getRange(1, 1, 1, headersEsperados.length).setValues([headersEsperados]);
+    sheet.getRange(1, 1, 1, headersEsperados.length).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    SpreadsheetApp.flush();
     return;
   }
 
-  var lastCol = sheet.getLastColumn();
-  var firstRow = sheet.getRange(1, 1, 1, Math.max(lastCol, 9)).getValues()[0];
-  var hasPrimeiroAcesso = false;
-  for (var i = 0; i < firstRow.length; i++) {
-    if (String(firstRow[i]).toUpperCase() === 'PRIMEIRO_ACESSO') {
-      hasPrimeiroAcesso = true;
-      break;
-    }
-  }
+  // Define os 9 cabeçalhos oficiais na Linha 1
+  sheet.getRange(1, 1, 1, headersEsperados.length).setValues([headersEsperados]).setFontWeight('bold');
+  sheet.setFrozenRows(1);
 
-  if (!hasPrimeiroAcesso) {
-    // Insere coluna na posição 7 (Coluna G)
-    sheet.insertColumnBefore(7);
-    sheet.getRange(1, 7).setValue('PRIMEIRO_ACESSO');
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+  // Se existirem dados cadastrados (linha 2 em diante), corrigimos eventuais deslocamentos de colunas
+  if (lastRow >= 2) {
+    var maxColToFetch = Math.max(lastCol, 10);
+    var numRows = lastRow - 1;
+    var range = sheet.getRange(2, 1, numRows, maxColToFetch);
+    var dados = range.getValues();
+    var alterou = false;
 
-    var totalRows = sheet.getLastRow();
-    if (totalRows >= 2) {
-      for (var r = 2; r <= totalRows; r++) {
-        var hash = String(sheet.getRange(r, 4).getValue() || '').trim();
-        var pAcesso = hash ? 'NAO' : 'SIM';
-        sheet.getRange(r, 7).setValue(pAcesso);
+    for (var i = 0; i < dados.length; i++) {
+      var linha = dados[i];
+      var idU = String(linha[0] || '').trim();
+      if (!idU) continue;
+
+      var colG = String(linha[6] || '').trim().toUpperCase(); // Coluna 7 (G)
+      var colH = String(linha[7] || '').trim().toUpperCase(); // Coluna 8 (H)
+      var valH = linha[7];
+      var valI = linha[8];
+      var valJ = maxColToFetch >= 10 ? linha[9] : undefined;
+
+      // Se a coluna H (8) contém 'SIM' ou 'NAO' (deslocamento da coluna PRIMEIRO_ACESSO)
+      if (colH === 'SIM' || colH === 'NAO' || colH === 'TRUE' || colH === 'FALSE') {
+        var pAcesso = (colG === 'SIM' || colG === 'NAO') ? colG : colH;
+        var realCriacao = '';
+        var realAtualizacao = '';
+
+        if (valJ !== undefined && valJ !== '' && valJ !== null) {
+          // Se existir a coluna J com valor, valI era DATA_CRIACAO e valJ era DATA_ATUALIZACAO
+          realCriacao = valI;
+          realAtualizacao = valJ;
+        } else if (valI !== undefined && valI !== '' && valI !== null) {
+          // Coluna I contém a data da última atualização. Deixamos DATA_CRIACAO vazia sem inventar data.
+          realCriacao = '';
+          realAtualizacao = valI;
+        }
+
+        linha[6] = pAcesso;
+        linha[7] = realCriacao;
+        linha[8] = realAtualizacao;
+        if (maxColToFetch >= 10) linha[9] = '';
+
+        alterou = true;
       }
     }
+
+    if (alterou) {
+      sheet.getRange(2, 1, numRows, maxColToFetch).setValues(dados);
+    }
   }
+
+  // Se a coluna J (10) ou superior contiver apenas o cabeçalho duplicado e linhas vazias, limpamos o cabeçalho J1
+  if (sheet.getLastColumn() >= 10) {
+    var jRange = sheet.getRange(1, 10, Math.max(lastRow, 1), sheet.getLastColumn() - 9);
+    var valuesJ = jRange.getValues();
+    var temDadosReaisEmJ = false;
+    for (var r = 1; r < valuesJ.length; r++) {
+      for (var c = 0; c < valuesJ[r].length; c++) {
+        if (String(valuesJ[r][c] || '').trim() !== '') {
+          temDadosReaisEmJ = true;
+          break;
+        }
+      }
+    }
+    if (!temDadosReaisEmJ) {
+      sheet.getRange(1, 10, 1, sheet.getLastColumn() - 9).clearContent();
+    }
+  }
+
+  SpreadsheetApp.flush();
 }
 
 function gerarHashSenha(senha) {
@@ -5941,4 +6076,58 @@ function TESTAR_AUTENTICACAO() {
   Logger.log('==================================================');
   Logger.log('BATERIA DE TESTES DE AUTENTICAÇÃO FINALIZADA');
   Logger.log('==================================================');
+}
+
+/* ============================================================
+ * CONTROLE DE RASCUNHO SINCRONIZADO (MULTI-DISPOSITIVO)
+ * ============================================================ */
+
+function salvarRascunhoDDS(draftJson) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(DDPS_ABAS.CONFIG);
+  if (!sheet) {
+    sheet = ss.insertSheet(DDPS_ABAS.CONFIG);
+    sheet.appendRow(['CONFIGURACAO', 'VALOR']);
+  }
+  
+  var lastRow = sheet.getLastRow();
+  var rascunhoRow = -1;
+  
+  if (lastRow >= 2) {
+    var chaves = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (var i = 0; i < chaves.length; i++) {
+      if (String(chaves[i][0]).trim() === 'RASCUNHO_DDS') {
+        rascunhoRow = i + 2;
+        break;
+      }
+    }
+  }
+  
+  if (rascunhoRow !== -1) {
+    sheet.getRange(rascunhoRow, 2).setValue(draftJson);
+  } else {
+    sheet.appendRow(['RASCUNHO_DDS', draftJson]);
+  }
+  
+  return { sucesso: true, mensagem: 'Rascunho salvo com sucesso.' };
+}
+
+function obterRascunhoDDS() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(DDPS_ABAS.CONFIG);
+  if (!sheet) {
+    return { sucesso: true, rascunho: '' };
+  }
+  
+  var lastRow = sheet.getLastRow();
+  if (lastRow >= 2) {
+    var dados = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+    for (var i = 0; i < dados.length; i++) {
+      if (String(dados[i][0]).trim() === 'RASCUNHO_DDS') {
+        return { sucesso: true, rascunho: dados[i][1] };
+      }
+    }
+  }
+  
+  return { sucesso: true, rascunho: '' };
 }

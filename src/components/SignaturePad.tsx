@@ -45,7 +45,7 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
 
     // Dimensões visuais em CSS
     const width = Math.floor(rect.width);
-    const height = Math.floor(Math.max(rect.height, 180));
+    const height = Math.floor(Math.max(rect.height, 220));
 
     // Se já havia desenho, captura snapshot antes de redimensionar o buffer interno
     let prevDataUrl: string | null = null;
@@ -88,9 +88,23 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
 
   useEffect(() => {
     setupCanvas();
+
+    const container = containerRef.current;
+    let resizeObserver: ResizeObserver | null = null;
+    if (container && typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        setupCanvas();
+      });
+      resizeObserver.observe(container);
+    }
+
     const handleResize = () => setupCanvas();
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+
+    return () => {
+      if (resizeObserver) resizeObserver.disconnect();
+      window.removeEventListener('resize', handleResize);
+    };
   }, [setupCanvas]);
 
   // Cálculo das coordenadas considerando a escala entre o tamanho visual do Canvas e a resolução interna
@@ -249,7 +263,7 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/60 backdrop-blur-xs animate-fadeIn">
-      <div className="w-full max-w-2xl bg-white border border-gray-200 rounded-3xl shadow-2xl flex flex-col overflow-hidden max-h-[95vh]">
+      <div className="w-full max-w-3xl bg-white border border-gray-200 rounded-3xl shadow-2xl flex flex-col overflow-hidden max-h-[95vh]">
         {/* Cabeçalho da assinatura */}
         <div className="p-4 sm:p-5 border-b border-gray-100 flex items-center justify-between bg-gray-50">
           <div className="flex items-center gap-3">
@@ -286,7 +300,7 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
 
           <div
             ref={containerRef}
-            className="relative w-full h-[200px] sm:h-[260px] md:h-[300px] bg-gray-50 rounded-2xl border-2 border-dashed border-gray-300 overflow-hidden touch-none flex flex-col justify-end select-none"
+            className="relative w-full h-[220px] sm:h-[280px] md:h-[320px] bg-gray-50 rounded-2xl border-2 border-dashed border-gray-300 overflow-hidden touch-none flex flex-col justify-end select-none"
             style={{ touchAction: 'none' }}
           >
             {/* Linha guia de assinatura como em papel de presença */}

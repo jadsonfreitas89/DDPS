@@ -1,4 +1,5 @@
 import { DDPSStatus, Funcionario, DDS, Participante, Emociograma, Usuario, PerfilUsuario } from '../types';
+import { sanitizeMotivoAusencia } from '../utils/absenceUtils';
 
 const TIMEOUT_MS = 60000;
 const AUTH_TOKEN_KEY = 'ddps_auth_token';
@@ -983,6 +984,22 @@ export const api = {
     return await response.json();
   },
 
+  async salvarRascunhoDDS(rascunho: string): Promise<{ sucesso: boolean; mensagem?: string }> {
+    const response = await postWithFallback({ acao: 'salvarRascunhoDDS', rascunho });
+    return await response.json();
+  },
+
+  async obterRascunhoDDS(): Promise<{ sucesso: boolean; rascunho?: string }> {
+    try {
+      const res = await fetchWithFallback('obterRascunhoDDS');
+      if (!res.ok) return { sucesso: false };
+      const data = await res.json();
+      return data;
+    } catch {
+      return { sucesso: false };
+    }
+  },
+
   // ==========================================================
   // 1. STATUS
   // ==========================================================
@@ -1511,12 +1528,12 @@ export const api = {
 
             ausente: isAusente,
 
-            motivoAusencia: isAusente ? String(
+            motivoAusencia: isAusente ? sanitizeMotivoAusencia(
               item.motivoAusencia ||
               item.motivo ||
               item.MOTIVO_AUSENCIA ||
               ''
-            ).trim() : ''
+            ) : ''
           };
         }
       );
@@ -1555,13 +1572,23 @@ export const api = {
             ...data.dds,
             status: (data.dds.status || 'pendente').toLowerCase() as any,
           },
-          participantes: (data.participantes || []).map((item: any) => ({
-            idFuncionario: String(item.idFuncionario || item.id || '').trim(),
-            nome: String(item.nome || '').trim(),
-            emociograma: normalizeEmojiToEmociograma(item.emociograma),
-            assinatura: String(item.assinatura || ''),
-            horaAssinatura: item.horaAssinatura || item.horarioAssinatura || item.dataHora
-          }))
+          participantes: (data.participantes || []).map((item: any) => {
+            const isAusente =
+              item.ausente === true ||
+              String(item.ausente || '').trim().toUpperCase() === 'SIM' ||
+              String(item.ausente || '').trim().toUpperCase() === 'TRUE';
+            return {
+              idFuncionario: String(item.idFuncionario || item.id || '').trim(),
+              nome: String(item.nome || '').trim(),
+              emociograma: isAusente ? 'BOM' : normalizeEmojiToEmociograma(item.emociograma),
+              assinatura: isAusente ? '' : String(item.assinatura || ''),
+              horaAssinatura: item.horaAssinatura || item.horarioAssinatura || item.dataHora,
+              ausente: isAusente,
+              motivoAusencia: isAusente ? sanitizeMotivoAusencia(
+                item.motivoAusencia || item.motivo || item.MOTIVO_AUSENCIA || ''
+              ) : ''
+            };
+          })
         };
       }
       throw new Error(data?.erro || 'Erro desconhecido');
@@ -1831,7 +1858,7 @@ export const api = {
           ausente:
             p.ausente ? 'SIM' : 'NAO',
           motivoAusencia:
-            p.ausente ? (p.motivoAusencia || '') : ''
+            p.ausente ? (sanitizeMotivoAusencia(p.motivoAusencia) || 'Atestado') : ''
         })
       );
 
@@ -1963,7 +1990,7 @@ export const api = {
           ausente:
             isAus ? 'SIM' : 'NAO',
           motivoAusencia:
-            isAus ? (participante.motivoAusencia || '') : ''
+            isAus ? (sanitizeMotivoAusencia(participante.motivoAusencia) || 'Atestado') : ''
         });
 
       const text =
