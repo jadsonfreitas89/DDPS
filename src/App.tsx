@@ -45,6 +45,7 @@ import { LoginView } from './views/LoginView';
 import { UserManagementView } from './views/UserManagementView';
 import { ConsultarSemanasView } from './views/ConsultarSemanasView';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
+import { ConfirmationModal } from './components/ConfirmationModal';
 import { getSemanaId, pertenceASemana } from './utils/weekUtils';
 import { sanitizeMotivoAusencia } from './utils/absenceUtils';
 
@@ -175,50 +176,26 @@ export default function App() {
   } | null>(null);
 
   const [isRemoteDraftLoaded, setIsRemoteDraftLoaded] = useState(false);
+  const [showDiscardAndNewModal, setShowDiscardAndNewModal] = useState(false);
+  const [showDiscardDraftModal, setShowDiscardDraftModal] = useState(false);
 
   // ==========================================================
   // RECUPERA RASCUNHO
   // ==========================================================
 
   useEffect(() => {
-
     try {
-
-      const draft =
-        localStorage.getItem(
-          getDraftStorageKey()
-        );
-
+      const draft = localStorage.getItem(getDraftStorageKey());
       if (draft) {
-
-        const parsed =
-          JSON.parse(draft);
-
-        if (
-          parsed.activeDDS &&
-          parsed.currentScreen &&
-          parsed.currentScreen !== 'inicio'
-        ) {
-
-          setActiveDDS(
-            parsed.activeDDS
-          );
-
-          setParticipantesMap(
-            parsed.participantesMap || {}
-          );
-
-          setCurrentScreen(
-            parsed.currentScreen
-          );
+        const parsed = JSON.parse(draft);
+        if (parsed.activeDDS) {
+          setActiveDDS(parsed.activeDDS);
+          setParticipantesMap(parsed.participantesMap || {});
         }
       }
-
     } catch {
-
       // Ignora erro no rascunho
     }
-
   }, []);
 
   // ==========================================================
@@ -227,25 +204,18 @@ export default function App() {
 
   useEffect(() => {
     // Só permite salvar ou limpar o rascunho APÓS o carregamento inicial do rascunho remoto terminar.
-    // Isso evita o bug de apagar o rascunho do servidor na inicialização do app.
     if (!isRemoteDraftLoaded) return;
 
-    if (
-      activeDDS &&
-      currentScreen !== 'inicio'
-    ) {
+    if (activeDDS) {
       const draftData = JSON.stringify({
         activeDDS,
         participantesMap,
-        currentScreen
+        currentScreen: currentScreen === 'inicio' ? 'participantes' : currentScreen
       });
 
       // 1. Salva localmente de forma instantânea
       try {
-        localStorage.setItem(
-          getDraftStorageKey(),
-          draftData
-        );
+        localStorage.setItem(getDraftStorageKey(), draftData);
       } catch {
         // Storage quota
       }
@@ -260,15 +230,10 @@ export default function App() {
       }, 2500);
 
       return () => clearTimeout(timer);
+    } else {
+      // Se não há DDS ativo, limpa o rascunho
+      localStorage.removeItem(getDraftStorageKey());
 
-    } else if (
-      currentScreen === 'inicio'
-    ) {
-      localStorage.removeItem(
-        getDraftStorageKey()
-      );
-
-      // Limpa rascunho remoto ao concluir/cancelar o DDS
       const limparRascunhoRemoto = async () => {
         try {
           await api.salvarRascunhoDDS('');
@@ -382,10 +347,10 @@ export default function App() {
       const backendDraftRes = await api.obterRascunhoDDS();
       if (backendDraftRes.sucesso && backendDraftRes.rascunho) {
         const parsed = JSON.parse(backendDraftRes.rascunho);
-        if (parsed.activeDDS && parsed.currentScreen && parsed.currentScreen !== 'inicio') {
+        if (parsed.activeDDS) {
           setActiveDDS(parsed.activeDDS);
           setParticipantesMap(parsed.participantesMap || {});
-          setCurrentScreen(parsed.currentScreen);
+          setCurrentScreen('inicio');
         }
       }
     } catch (e) {
@@ -420,10 +385,10 @@ export default function App() {
             const backendDraftRes = await api.obterRascunhoDDS();
             if (backendDraftRes.sucesso && backendDraftRes.rascunho) {
               const parsed = JSON.parse(backendDraftRes.rascunho);
-              if (parsed.activeDDS && parsed.currentScreen && parsed.currentScreen !== 'inicio') {
+              if (parsed.activeDDS) {
                 setActiveDDS(parsed.activeDDS);
                 setParticipantesMap(parsed.participantesMap || {});
-                setCurrentScreen(parsed.currentScreen);
+                setCurrentScreen('inicio');
               }
             }
           } catch (e) {
@@ -478,14 +443,84 @@ export default function App() {
   // INICIAR NOVO DDS
   // ==========================================================
 
-  const handleStartNovoDDS =
-    () => {
+  const handleStartNovoDDS = () => {
+    if (activeDDS) {
+      setShowDiscardAndNewModal(true);
+    } else {
+      executeStartNovoDDS();
+    }
+  };
+
+  const executeStartNovoDDS = () => {
+    setActiveDDS(null);
+    setParticipantesMap({});
+    setCurrentScreen('novo_dds');
+  };
+
+  const handleContinuarDDS = () => {
+    try {
+      const draft = localStorage.getItem(getDraftStorageKey());
+      if (draft) {
+        const parsed = JSON.parse(draft);
+        if (parsed.currentScreen) {
+          setCurrentScreen(parsed.currentScreen);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('Erro ao ler tela do rascunho:', e);
+    }
+    // Fallback padrão se não encontrar a tela gravada
+    setCurrentScreen('participantes');
+  };
+
+  const handleConfirmDescartar = async () => {
+    setIsActionLoading(true);
+    setShowDiscardDraftModal(false);
+    try {
+      // 1. Limpa localmente
+      localStorage.removeItem(getDraftStorageKey());
+      
+      // 2. Limpa no servidor imediatamente (sem delay)
+      await api.salvarRascunhoDDS('');
+      
+      // 3. Reseta estados locais
       setActiveDDS(null);
       setParticipantesMap({});
-      setCurrentScreen(
-        'novo_dds'
-      );
-    };
+      
+      // 4. Atualiza o status/dashboard em tempo real
+      const freshStatus = await api.getStatus().catch(() => null);
+      if (freshStatus) {
+        setStatus(freshStatus);
+      }
+      
+      showToast('Rascunho excluído com sucesso.', 'success');
+    } catch (e) {
+      console.warn('[DDPS] Erro ao descartar rascunho:', e);
+      // Fallback local garantido
+      setActiveDDS(null);
+      setParticipantesMap({});
+      showToast('Rascunho removido localmente, mas houve instabilidade ao remover do servidor.', 'info');
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const handleDescartarRascunho = () => {
+    setShowDiscardDraftModal(true);
+  };
+
+  const handleConfirmDiscardAndNew = async () => {
+    setShowDiscardAndNewModal(false);
+    setIsActionLoading(true);
+    try {
+      localStorage.removeItem(getDraftStorageKey());
+      await api.salvarRascunhoDDS('').catch((e) => console.warn('[DDPS] Erro ao limpar rascunho remoto:', e));
+      executeStartNovoDDS();
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
 
   // ==========================================================
   // CRIAR NOVO DDS
@@ -800,8 +835,12 @@ export default function App() {
         )
       );
 
-      // LIMPA RASCUNHO
+      // LIMPA RASCUNHO IMEDIATAMENTE NO CLIENTE E NO SERVIDOR (sem delay)
       localStorage.removeItem(getDraftStorageKey());
+      await api.salvarRascunhoDDS('').catch((e) => {
+        console.warn('[DDPS] Erro ao limpar rascunho remoto após finalizar:', e);
+      });
+      
       setActiveDDS(null);
       setParticipantesMap({});
 
@@ -1216,38 +1255,16 @@ export default function App() {
               'inicio' && (
 
               <HomeView
-
-                status={
-                  status
-                }
-
-                ddsSemana={
-                  ddsSemana
-                }
-
-                onNovoDDS={
-                  handleStartNovoDDS
-                }
-
-                onViewDDS={
-                  (dds) =>
-                    setSelectedDDSForView(
-                      dds
-                    )
-                }
-
-                onConsultarSemanas={
-                  () => setCurrentScreen('consultar_semanas')
-                }
-
-                onSync={
-                  handleSync
-                }
-
-                isSyncing={
-                  isSyncing
-                }
-
+                status={status}
+                ddsSemana={ddsSemana}
+                onNovoDDS={handleStartNovoDDS}
+                onViewDDS={(dds) => setSelectedDDSForView(dds)}
+                onConsultarSemanas={() => setCurrentScreen('consultar_semanas')}
+                onSync={handleSync}
+                isSyncing={isSyncing}
+                activeDDS={activeDDS}
+                onContinuarDDS={handleContinuarDDS}
+                onDescartarRascunho={handleDescartarRascunho}
               />
             )}
 
@@ -1490,6 +1507,30 @@ export default function App() {
       <ChangePasswordModal
         isOpen={showChangePassModal}
         onClose={() => setShowChangePassModal(false)}
+      />
+
+      {/* Modal para Confirmar Descarte de Rascunho na Home */}
+      <ConfirmationModal
+        isOpen={showDiscardDraftModal}
+        title="Descartar Rascunho"
+        description="Tem certeza que deseja excluir permanentemente o rascunho em andamento? Esta ação não poderá ser desfeita."
+        confirmLabel="Sim, Descartar"
+        cancelLabel="Cancelar"
+        variant="danger"
+        onConfirm={handleConfirmDescartar}
+        onCancel={() => setShowDiscardDraftModal(false)}
+      />
+
+      {/* Modal para Confirmar Descarte ao Iniciar um Novo DDS */}
+      <ConfirmationModal
+        isOpen={showDiscardAndNewModal}
+        title="Iniciar Novo DDS"
+        description="Você já possui um rascunho de DDPS em andamento. Deseja descartá-lo para iniciar um novo do zero?"
+        confirmLabel="Descartar e Iniciar"
+        cancelLabel="Voltar"
+        variant="danger"
+        onConfirm={handleConfirmDiscardAndNew}
+        onCancel={() => setShowDiscardAndNewModal(false)}
       />
 
     </div>

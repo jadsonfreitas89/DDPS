@@ -14,6 +14,9 @@ interface HomeViewProps {
   onConsultarSemanas: () => void;
   onSync: () => void;
   isSyncing: boolean;
+  activeDDS?: DDS | null;
+  onContinuarDDS?: () => void;
+  onDescartarRascunho?: () => void;
 }
 
 const DIAS_DA_SEMANA = [
@@ -50,7 +53,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onViewDDS,
   onConsultarSemanas,
   onSync,
-  isSyncing
+  isSyncing,
+  activeDDS,
+  onContinuarDDS,
+  onDescartarRascunho
 }) => {
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
@@ -140,6 +146,44 @@ export const HomeView: React.FC<HomeViewProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Coluna Esquerda (4 colunas em telas grandes) */}
         <section className="lg:col-span-4 flex flex-col gap-6">
+          {/* Card: DDPS em Andamento (Se houver rascunho ativo) */}
+          {activeDDS && (
+            <div className="bg-yellow-50 border border-yellow-300 rounded-3xl p-6 shadow-sm flex flex-col gap-4 animate-fadeIn">
+              <div>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider bg-yellow-400 text-black rounded-full shadow-2xs">
+                  <span className="w-1.5 h-1.5 bg-black rounded-full animate-ping" />
+                  DDS em Andamento
+                </span>
+                <h3 className="text-xl font-extrabold mt-3 text-yellow-950 truncate">
+                  {activeDDS.tema || 'DDS Sem Tema'}
+                </h3>
+                <p className="text-xs text-yellow-800 mt-1 leading-relaxed">
+                  Há um rascunho em preenchimento para o dia <strong>{activeDDS.diaSemana || 'não especificado'}</strong>. Você pode continuar ou descartar para iniciar outro.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="md"
+                  fullWidth
+                  onClick={onContinuarDDS}
+                  className="bg-yellow-400 hover:bg-yellow-500 text-black font-extrabold py-3 border-none shadow-sm uppercase tracking-wider text-xs"
+                >
+                  Continuar Preenchimento
+                </Button>
+                <button
+                  type="button"
+                  onClick={onDescartarRascunho}
+                  className="text-xs font-bold text-red-600 hover:text-red-800 uppercase tracking-wider underline py-1 text-center"
+                >
+                  Descartar Rascunho
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Card: Status de Hoje */}
           <div className="bg-white rounded-3xl p-6 shadow-xs border border-gray-200 flex flex-col justify-between gap-4">
             <div>
