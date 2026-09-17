@@ -35,6 +35,7 @@ export interface Participante {
 export interface DDS {
   idDDS: string;
   semana?: number | string;
+  semanaId?: string;
   diaSemana: string;
   diaSemanaNumero?: number;
   data: string;

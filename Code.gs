@@ -360,6 +360,12 @@ function doGet(e) {
         var res = obterDDSCompleto(e.parameter.idDDS || e.parameter.id);
         return respostaJSON(res);
       }
+
+      if (acao === 'obterDadosSemanaPDF') {
+        exigirAutenticacao(token);
+        var ddsIdsParam = e.parameter.ddsIds ? String(e.parameter.ddsIds).split(',') : null;
+        return respostaJSON(obterDadosSemanaPDF(e.parameter.semanaId, ddsIdsParam));
+      }
       
       if (acao === 'buscarAssinaturaEncarregado' || acao === 'obterAssinaturaEncarregado') {
         exigirAutenticacao(token);
@@ -543,6 +549,10 @@ function doPost(e) {
       case 'salvarRascunhoDDS':
         exigirAutenticacao(token);
         return respostaJSON(salvarRascunhoDDS(dados.rascunho));
+
+      case 'obterDadosSemanaPDF':
+        exigirAutenticacao(token);
+        return respostaJSON(obterDadosSemanaPDF(dados.semanaId, dados.ddsIds));
 
       default:
         return respostaJSON({
@@ -1975,6 +1985,27 @@ function listarDDS() {
       )
       .getValues();
 
+  // Pré-carrega o mapa de assinaturas de encarregado para evitar a consulta N+1 na aba ASSINATURAS
+  var mapAssinaturasEncarregado = {};
+  try {
+    var sheetAss = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(DDPS_ABAS.ASSINATURAS);
+    if (sheetAss && sheetAss.getLastRow() >= 2) {
+      var lastRowAss = sheetAss.getLastRow();
+      var colCountAss = sheetAss.getLastColumn();
+      var dadosAss = sheetAss.getRange(2, 1, lastRowAss - 1, Math.min(6, colCountAss)).getValues();
+      for (var a = 0; a < dadosAss.length; a++) {
+        var ddsIdAss = String(dadosAss[a][1] || '').trim();
+        var arquivoAss = String(dadosAss[a][3] || '').trim();
+        var tipoAss = colCountAss >= 6 ? String(dadosAss[a][5] || 'PARTICIPANTE').trim().toUpperCase() : 'PARTICIPANTE';
+        if (ddsIdAss && tipoAss === 'ENCARREGADO' && arquivoAss) {
+          mapAssinaturasEncarregado[ddsIdAss] = arquivoAss;
+        }
+      }
+    }
+  } catch (errAss) {
+    Logger.log('Aviso pré-carregamento mapa assinaturas: ' + errAss.message);
+  }
+
   var lista = [];
 
   for (
@@ -2050,7 +2081,7 @@ function listarDDS() {
         numCols >= 14 ? String(dados[i][13] || '').trim() : '',
 
       assinaturaEncarregado:
-        obterAssinaturaEncarregado(idDDSStr)
+        mapAssinaturasEncarregado[idDDSStr] || ''
     });
   }
 
@@ -4637,6 +4668,229 @@ function TESTAR_PRESERVACAO_ASSINATURA() {
   Logger.log('EMOCIOGRAMA ATUALIZADO -> SIM');
   Logger.log('ASSINATURA NA ABA ASSINATURAS -> SIM');
   Logger.log('==============================================');
+}
+
+/**
+ * OBTÉM TODOS OS DADOS NECESSÁRIOS PARA A GERAÇÃO DO PDF SEMANAL EM UMA ÚNICA REQUISIÇÃO.
+ * Lê as abas DDS, PARTICIPANTES, ASSINATURAS e FUNCIONARIOS em memória uma única vez.
+ */
+function obterDadosSemanaPDF(semanaId, ddsIds) {
+  var tStart = new Date().getTime();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // 1. Converter ddsIds para array se necessário
+  var ddsIdsSet = {};
+  var hasDDSIdsFilter = false;
+  if (Array.isArray(ddsIds) && ddsIds.length > 0) {
+    for (var k = 0; k < ddsIds.length; k++) {
+      var sId = String(ddsIds[k] || '').trim();
+      if (sId) {
+        ddsIdsSet[sId] = true;
+        hasDDSIdsFilter = true;
+      }
+    }
+  }
+
+  semanaId = String(semanaId || '').trim();
+
+  // 2. Carregar Lista de Funcionários Ativos
+  var listaFuncionarios = [];
+  var mapFuncionarios = {};
+  try {
+    var sheetFunc = ss.getSheetByName(DDPS_ABAS.FUNCIONARIOS);
+    if (sheetFunc && sheetFunc.getLastRow() >= 2) {
+      garantirSchemaFuncionarios(sheetFunc);
+      var lastRowFunc = sheetFunc.getLastRow();
+      var colCountFunc = sheetFunc.getLastColumn();
+      var dadosFunc = sheetFunc.getRange(2, 1, lastRowFunc - 1, Math.max(4, colCountFunc)).getValues();
+      for (var f = 0; f < dadosFunc.length; f++) {
+        var idF = String(dadosFunc[f][0] || '').trim().toUpperCase();
+        var nomeF = String(dadosFunc[f][1] || '').trim();
+        var cargoF = String(dadosFunc[f][2] || '').trim();
+        var ativoF = dadosFunc[f][3] !== false && String(dadosFunc[f][3] || '').toUpperCase() !== 'FALSE';
+
+        if (idF && nomeF) {
+          var funcObj = {
+            id: idF,
+            idFuncionario: idF,
+            nome: nomeF,
+            funcao: cargoF,
+            cargo: cargoF,
+            ativo: ativoF
+          };
+          mapFuncionarios[idF] = funcObj;
+          if (ativoF) {
+            listaFuncionarios.push(funcObj);
+          }
+        }
+      }
+    }
+  } catch (errFunc) {
+    Logger.log('Erro ao carregar funcionários em obterDadosSemanaPDF: ' + errFunc.message);
+  }
+
+  // Ordena funcionários por nome
+  listaFuncionarios.sort(function(a, b) {
+    return a.nome.localeCompare(b.nome, 'pt-BR');
+  });
+
+  // 3. Carregar Mapa de Assinaturas (aba ASSINATURAS) em memória
+  var mapAssinaturasParticipante = {}; // key: idDDS + '_' + idFuncionario
+  var mapAssinaturasEncarregado = {};   // key: idDDS -> arquivo
+  try {
+    var sheetAss = ss.getSheetByName(DDPS_ABAS.ASSINATURAS);
+    if (sheetAss && sheetAss.getLastRow() >= 2) {
+      garantirSchemaAssinaturas(sheetAss);
+      var lastRowAss = sheetAss.getLastRow();
+      var colCountAss = sheetAss.getLastColumn();
+      var dadosAss = sheetAss.getRange(2, 1, lastRowAss - 1, Math.max(6, colCountAss)).getValues();
+      for (var a = 0; a < dadosAss.length; a++) {
+        var ddsIdAss = String(dadosAss[a][1] || '').trim();
+        var funcIdAss = String(dadosAss[a][2] || '').trim().toUpperCase();
+        var arquivoAss = String(dadosAss[a][3] || '').trim();
+        var tipoAss = colCountAss >= 6 ? String(dadosAss[a][5] || 'PARTICIPANTE').trim().toUpperCase() : 'PARTICIPANTE';
+
+        if (ddsIdAss && arquivoAss) {
+          if (tipoAss === 'ENCARREGADO') {
+            mapAssinaturasEncarregado[ddsIdAss] = arquivoAss;
+          } else {
+            if (funcIdAss) {
+              mapAssinaturasParticipante[ddsIdAss + '_' + funcIdAss] = arquivoAss;
+            }
+          }
+        }
+      }
+    }
+  } catch (errAss) {
+    Logger.log('Erro ao carregar assinaturas em obterDadosSemanaPDF: ' + errAss.message);
+  }
+
+  // 4. Carregar DDSs filtrados
+  var ddsList = [];
+  var ddsIdsEncontradosMap = {};
+  try {
+    var sheetDDS = ss.getSheetByName(DDPS_ABAS.DDS);
+    if (sheetDDS && sheetDDS.getLastRow() >= 2) {
+      garantirSchemaDDS(sheetDDS);
+      var lastRowDDS = sheetDDS.getLastRow();
+      var colCountDDS = sheetDDS.getLastColumn();
+      var numColsDDS = Math.max(14, colCountDDS);
+      var dadosDDS = sheetDDS.getRange(2, 1, lastRowDDS - 1, numColsDDS).getValues();
+
+      for (var d = 0; d < dadosDDS.length; d++) {
+        if (!dadosDDS[d][0]) continue;
+        var idDDSStr = String(dadosDDS[d][0]).trim();
+        var ddsSemanaId = String(dadosDDS[d][1] || '').trim();
+
+        // Filtro: pertence à semanaId solicitada OU está presente no ddsIdsSet
+        var pertence = false;
+        if (hasDDSIdsFilter && ddsIdsSet[idDDSStr]) {
+          pertence = true;
+        } else if (semanaId && ddsSemanaId === semanaId) {
+          pertence = true;
+        } else if (!semanaId && !hasDDSIdsFilter) {
+          pertence = true;
+        }
+
+        if (pertence) {
+          ddsIdsEncontradosMap[idDDSStr] = true;
+          ddsList.push({
+            idDDS: idDDSStr,
+            semanaId: ddsSemanaId,
+            data: dadosDDS[d][2],
+            horario: dadosDDS[d][3],
+            diaSemana: String(dadosDDS[d][4] || '').trim(),
+            tema: String(dadosDDS[d][5] || '').trim(),
+            conteudo: String(dadosDDS[d][6] || '').trim(),
+            local: String(dadosDDS[d][7] || '').trim(),
+            responsavel: String(dadosDDS[d][8] || '').trim(),
+            observacoes: String(dadosDDS[d][9] || '').trim(),
+            status: String(dadosDDS[d][10] || '').trim(),
+            dataCriacao: dadosDDS[d][11],
+            encarregadoId: numColsDDS >= 13 ? String(dadosDDS[d][12] || '').trim() : '',
+            encarregadoNome: numColsDDS >= 14 ? String(dadosDDS[d][13] || '').trim() : '',
+            assinaturaEncarregado: mapAssinaturasEncarregado[idDDSStr] || '',
+            participantes: []
+          });
+        }
+      }
+    }
+  } catch (errDDS) {
+    Logger.log('Erro ao carregar DDS em obterDadosSemanaPDF: ' + errDDS.message);
+  }
+
+  // 5. Carregar Participantes da aba PARTICIPANTES para os DDSs filtrados
+  try {
+    var sheetPart = ss.getSheetByName(DDPS_ABAS.PARTICIPANTES);
+    if (sheetPart && sheetPart.getLastRow() >= 2) {
+      garantirSchemaParticipantes(sheetPart);
+      var lastRowPart = sheetPart.getLastRow();
+      var colCountPart = sheetPart.getLastColumn();
+      var numColsPart = Math.max(9, colCountPart);
+      var dadosPart = sheetPart.getRange(2, 1, lastRowPart - 1, numColsPart).getValues();
+
+      // Agrupa os participantes por idDDS
+      var mapParticipantesByDDS = {};
+      for (var p = 0; p < dadosPart.length; p++) {
+        var pDDSId = String(dadosPart[p][1] || '').trim();
+        if (!pDDSId || !ddsIdsEncontradosMap[pDDSId]) continue;
+
+        var pFuncId = String(dadosPart[p][2] || '').trim().toUpperCase();
+        var pNome = String(dadosPart[p][3] || '').trim();
+        var pEmociograma = String(dadosPart[p][4] || 'BOM').trim().toUpperCase();
+        var pAssinaturaSheet = String(dadosPart[p][5] || '').trim();
+        var pDataHora = dadosPart[p][6];
+        var pAusenteVal = numColsPart >= 8 ? dadosPart[p][7] : false;
+        var pAusente = pAusenteVal === true || String(pAusenteVal || '').toUpperCase() === 'SIM' || String(pAusenteVal || '').toUpperCase() === 'TRUE';
+        var pMotivo = numColsPart >= 9 ? String(dadosPart[p][8] || '').trim() : '';
+
+        // Tenta obter a assinatura da aba ASSINATURAS se não estiver presente no registro de PARTICIPANTES
+        var pAssinatura = pAssinaturaSheet || mapAssinaturasParticipante[pDDSId + '_' + pFuncId] || '';
+
+        // Se o nome/cargo não estivem preenchidos, tenta completar via mapFuncionarios
+        var funcCadastrado = mapFuncionarios[pFuncId];
+        if (!pNome && funcCadastrado) {
+          pNome = funcCadastrado.nome;
+        }
+
+        var partObj = {
+          idFuncionario: pFuncId,
+          nome: pNome,
+          cargo: funcCadastrado ? funcCadastrado.cargo : '',
+          funcao: funcCadastrado ? funcCadastrado.funcao : '',
+          emociograma: pEmociograma,
+          assinatura: pAssinatura,
+          dataHora: pDataHora,
+          ausente: pAusente,
+          motivoAusencia: pMotivo
+        };
+
+        if (!mapParticipantesByDDS[pDDSId]) {
+          mapParticipantesByDDS[pDDSId] = [];
+        }
+        mapParticipantesByDDS[pDDSId].push(partObj);
+      }
+
+      // Atribui participantes aos DDSs correspondentes
+      for (var i = 0; i < ddsList.length; i++) {
+        var itemDDS = ddsList[i];
+        itemDDS.participantes = mapParticipantesByDDS[itemDDS.idDDS] || [];
+      }
+    }
+  } catch (errPart) {
+    Logger.log('Erro ao carregar participantes em obterDadosSemanaPDF: ' + errPart.message);
+  }
+
+  var tEnd = new Date().getTime();
+  Logger.log('obterDadosSemanaPDF concluído em ' + (tEnd - tStart) + 'ms para semanaId=' + semanaId);
+
+  return {
+    sucesso: true,
+    semanaId: semanaId,
+    funcionarios: listaFuncionarios,
+    dds: ddsList,
+    tempoExecucaoMs: (tEnd - tStart)
+  };
 }
 
 /**

@@ -158,46 +158,76 @@ export async function carregarDadosSemanaAcumulados(
   diasMapeados: DayDDSData[];
   participantesAcumulados: CumulativeParticipant[];
 }> {
-  // 1. Buscar a lista COMPLETA de colaboradores ATIVOS na aba FUNCIONARIOS
+  const t1 = performance.now();
+  console.log('[PERF PDF] T1: Chamada backend iniciada');
+
   let funcionariosAtivos: any[] = [];
+  let allDDS: Array<DDS & { participantes?: Participante[] }> = [];
+
+  const semanaId = ddsSemana.find((d) => d.semanaId)?.semanaId || '';
+  const ddsIds = ddsSemana.map((d) => d.idDDS).filter(Boolean);
+
+  let usouAgregado = false;
+
   try {
-    const list = await api.getFuncionarios(false);
-    if (Array.isArray(list)) {
-      funcionariosAtivos = list.filter((f) => f.ativo !== false);
+    const resAgregado = await api.obterDadosSemanaPDF(semanaId, ddsIds);
+    const t2 = performance.now();
+    console.log(`[PERF PDF] T2/T3: Leitura e montagem dos dados no backend concluída em ${(t2 - t1).toFixed(2)}ms`);
+
+    if (resAgregado && resAgregado.sucesso && Array.isArray(resAgregado.dds) && resAgregado.dds.length > 0) {
+      usouAgregado = true;
+      if (Array.isArray(resAgregado.funcionarios)) {
+        funcionariosAtivos = resAgregado.funcionarios.filter((f) => f.ativo !== false);
+      }
+      allDDS = resAgregado.dds;
     }
-  } catch (err) {
-    console.warn('[PDF] Erro ao buscar colaboradores ativos da API:', err);
+  } catch (errAgregado) {
+    console.warn('[PDF] Chamada agregada obterDadosSemanaPDF falhou, usando fallback:', errAgregado);
+  }
+
+  const t4 = performance.now();
+  console.log(`[PERF PDF] T4: Resposta recebida e processada pelo frontend (${(t4 - t1).toFixed(2)}ms)`);
+
+  // Fallback caso a chamada agregada não retorne dados
+  if (!usouAgregado) {
+    try {
+      const list = await api.getFuncionarios(false);
+      if (Array.isArray(list)) {
+        funcionariosAtivos = list.filter((f) => f.ativo !== false);
+      }
+    } catch (err) {
+      console.warn('[PDF] Erro ao buscar colaboradores ativos da API:', err);
+    }
+
+    allDDS = [...ddsSemana];
+    try {
+      const serverList = await api.listarDDS();
+      if (Array.isArray(serverList) && serverList.length > 0) {
+        const map = new Map<string, DDS>();
+        allDDS.forEach((d) => map.set(d.idDDS, d));
+        serverList.forEach((d) => {
+          if (!map.has(d.idDDS)) {
+            map.set(d.idDDS, d);
+          } else {
+            const localItem = map.get(d.idDDS);
+            map.set(d.idDDS, {
+              ...d,
+              ...localItem,
+              local: (localItem?.local && localItem.local.trim() !== '') ? localItem.local : (d.local || '')
+            });
+          }
+        });
+        allDDS = Array.from(map.values());
+      }
+    } catch (err) {
+      console.warn('[PDF] Erro ao sincronizar lista completa de DDS:', err);
+    }
   }
 
   // Ordena os funcionários ativos por nome para manter uma ordem completamente estável
   funcionariosAtivos.sort((a, b) =>
     String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR')
   );
-
-  // 2. Buscar lista de DDS para garantir preenchimento semanal
-  let allDDS = [...ddsSemana];
-  try {
-    const serverList = await api.listarDDS();
-    if (Array.isArray(serverList) && serverList.length > 0) {
-      const map = new Map<string, DDS>();
-      allDDS.forEach((d) => map.set(d.idDDS, d));
-      serverList.forEach((d) => {
-        if (!map.has(d.idDDS)) {
-          map.set(d.idDDS, d);
-        } else {
-          const localItem = map.get(d.idDDS);
-          map.set(d.idDDS, {
-            ...d,
-            ...localItem,
-            local: (localItem?.local && localItem.local.trim() !== '') ? localItem.local : (d.local || '')
-          });
-        }
-      });
-      allDDS = Array.from(map.values());
-    }
-  } catch (err) {
-    console.warn('[PDF] Erro ao sincronizar lista completa de DDS:', err);
-  }
 
   // 3. Mapeia os 7 dias da semana (SEGUNDA a DOMINGO)
   const diasMapeados: DayDDSData[] = [];
@@ -242,42 +272,47 @@ export async function carregarDadosSemanaAcumulados(
     let ddsCompletoObj = ddsEncontrado;
 
     if (ddsEncontrado && ddsEncontrado.idDDS) {
-      try {
-        const result = await api.getDDSCompleto(ddsEncontrado.idDDS);
-        if (result && result.sucesso) {
-          if (result.dds) {
-            ddsCompletoObj = {
-              ...ddsEncontrado,
-              ...result.dds,
-              local: (result.dds.local && result.dds.local.trim() !== '') ? result.dds.local : (ddsEncontrado?.local || '')
-            };
-          }
-          if (Array.isArray(result.participantes)) {
-            participantesDoDia = result.participantes;
-          }
-        }
-      } catch (err) {
-        console.warn(`[PDF] Erro ao carregar DDSCompleto do dia ${dia.nome}:`, err);
-        if (Array.isArray(ddsEncontrado.participantes) && ddsEncontrado.participantes.length > 0) {
-          participantesDoDia = ddsEncontrado.participantes;
-        } else {
-          try {
-            participantesDoDia = await api.getParticipantes(ddsEncontrado.idDDS);
-          } catch {
-            participantesDoDia = [];
-          }
-        }
-      }
-
-      // Garante a busca individualizada da assinatura do encarregado para o ID_DDS do dia
-      if (ddsCompletoObj && (!ddsCompletoObj.assinaturaEncarregado || ddsCompletoObj.assinaturaEncarregado.trim() === '')) {
+      if (usouAgregado) {
+        // Na chamada agregada, participantes e assinaturas já vêm pré-carregados!
+        participantesDoDia = ddsEncontrado.participantes || [];
+      } else {
         try {
-          const assEnc = await api.buscarAssinaturaEncarregado(ddsEncontrado.idDDS);
-          if (assEnc) {
-            ddsCompletoObj.assinaturaEncarregado = assEnc;
+          const result = await api.getDDSCompleto(ddsEncontrado.idDDS);
+          if (result && result.sucesso) {
+            if (result.dds) {
+              ddsCompletoObj = {
+                ...ddsEncontrado,
+                ...result.dds,
+                local: (result.dds.local && result.dds.local.trim() !== '') ? result.dds.local : (ddsEncontrado?.local || '')
+              };
+            }
+            if (Array.isArray(result.participantes)) {
+              participantesDoDia = result.participantes;
+            }
           }
-        } catch {
-          // ignora
+        } catch (err) {
+          console.warn(`[PDF] Erro ao carregar DDSCompleto do dia ${dia.nome}:`, err);
+          if (Array.isArray(ddsEncontrado.participantes) && ddsEncontrado.participantes.length > 0) {
+            participantesDoDia = ddsEncontrado.participantes;
+          } else {
+            try {
+              participantesDoDia = await api.getParticipantes(ddsEncontrado.idDDS);
+            } catch {
+              participantesDoDia = [];
+            }
+          }
+        }
+
+        // Garante a busca individualizada da assinatura do encarregado para o ID_DDS do dia
+        if (ddsCompletoObj && (!ddsCompletoObj.assinaturaEncarregado || ddsCompletoObj.assinaturaEncarregado.trim() === '')) {
+          try {
+            const assEnc = await api.buscarAssinaturaEncarregado(ddsEncontrado.idDDS);
+            if (assEnc) {
+              ddsCompletoObj.assinaturaEncarregado = assEnc;
+            }
+          } catch {
+            // ignora
+          }
         }
       }
     }
@@ -442,7 +477,13 @@ export async function gerarPDFSemanalDDPS(
   status: DDPSStatus | null,
   ddsSemana: DDS[]
 ): Promise<void> {
+  const t0 = performance.now();
+  console.log('[PERF PDF] T0: Início da geração do PDF');
+
   const { diasMapeados, participantesAcumulados } = await carregarDadosSemanaAcumulados(ddsSemana);
+
+  const t5 = performance.now();
+  console.log(`[PERF PDF] T5: Dados recebidos pelo frontend e montados, iniciando jsPDF (${(t5 - t0).toFixed(2)}ms total)`);
 
   // Formato A4 Paisagem (Landscape): 297mm x 210mm
   const doc = new jsPDF({
@@ -941,7 +982,13 @@ export async function gerarPDFSemanalDDPS(
   doc.setFontSize(6);
   doc.text('Observação:', marginLeft + 2, obsRowY + 3.4);
 
+  const t6 = performance.now();
+  console.log(`[PERF PDF] T6: Desenho do jsPDF concluído (${(t6 - t5).toFixed(2)}ms)`);
+
   // Salva o PDF com nome padronizado
   const nomeArquivo = `DDPS_Folha_Semanal_${status?.semana || 'Oficial'}_${new Date().toISOString().slice(0, 10)}.pdf`;
   doc.save(nomeArquivo);
+
+  const t7 = performance.now();
+  console.log(`[PERF PDF] T7: Download do PDF concluído (Tempo total T0->T7: ${(t7 - t0).toFixed(2)}ms)`);
 }

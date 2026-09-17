@@ -2171,6 +2171,40 @@ export const api = {
     }
   },
 
+  async obterDadosSemanaPDF(
+    semanaId?: string,
+    ddsIds?: string[]
+  ): Promise<{
+    sucesso: boolean;
+    semanaId?: string;
+    funcionarios?: Funcionario[];
+    dds?: Array<DDS & { participantes?: Participante[] }>;
+    erro?: string;
+  }> {
+    try {
+      const payload: any = {
+        acao: 'obterDadosSemanaPDF',
+        action: 'obterDadosSemanaPDF'
+      };
+      if (semanaId) payload.semanaId = semanaId;
+      if (Array.isArray(ddsIds) && ddsIds.length > 0) payload.ddsIds = ddsIds;
+
+      const res = await postWithFallback(payload);
+      if (!res.ok) {
+        throw new Error(`HTTP error ${res.status}`);
+      }
+      const text = await res.text();
+      const data = JSON.parse(text);
+      if (data && (data.sucesso || data.success)) {
+        return data;
+      }
+      return { sucesso: false, erro: data?.erro || 'Erro ao carregar dados da semana' };
+    } catch (err: any) {
+      console.warn('[DDPS API] Erro em obterDadosSemanaPDF:', err);
+      return { sucesso: false, erro: err?.message || 'Falha ao buscar dados agregados da semana' };
+    }
+  },
+
   async registrarAssinaturaEncarregado(
     idDDS: string,
     idFuncionario: string,
