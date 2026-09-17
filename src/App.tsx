@@ -921,12 +921,13 @@ export default function App() {
 
   const handleDeleteSuccess = (idDDS: string) => {
     setDdsSemana((prev) => prev.filter((d) => d.idDDS !== idDDS));
+    setAllDDS((prev) => prev.filter((d) => d.idDDS !== idDDS));
     if (activeDDS && activeDDS.idDDS === idDDS) {
       setActiveDDS(null);
       setParticipantesMap({});
     }
     setSelectedDDSForView(null);
-    showToast('DDS excluído com sucesso.', 'success');
+    showToast('DDPS excluído com sucesso.', 'success');
   };
 
   // ==========================================================
@@ -938,30 +939,23 @@ export default function App() {
     setIsSyncing(true);
 
     try {
-      const [ddsRes, funcsRes, statusRes] = await Promise.all([
-        api.listarDDS(),
-        api.getFuncionarios(false).catch(() => []),
-        api.getStatus().catch(() => null)
-      ]);
+      // Chamada HTTP agregada otimizada (com fallback inteligente)
+      const syncResult = await api.sincronizar();
 
-      if (ddsRes) {
-        const rawDDSList = Array.isArray(ddsRes) ? ddsRes : [];
+      if (syncResult.dds) {
+        const rawDDSList = Array.isArray(syncResult.dds) ? syncResult.dds : [];
         setAllDDS(rawDDSList);
         const currentSemanaId = getSemanaId(new Date());
         const ddsFiltrados = rawDDSList.filter((d) => pertenceASemana(d, currentSemanaId));
         setDdsSemana(ddsFiltrados);
       }
 
-      if (funcsRes && funcsRes.length > 0) {
-        setFuncionarios(funcsRes);
+      if (syncResult.status) {
+        setStatus(syncResult.status);
       }
 
-      if (statusRes) {
-        setStatus(statusRes);
-      }
-
-      // Se a tela de colaboradores já tiver carregado ou estiver em uso, sincroniza também
-      if (allFuncionarios.length > 0) {
+      // Se a tela de colaboradores estiver ativa, sincroniza também
+      if (currentScreen === 'colaboradores') {
         loadAllFuncionarios();
       }
 
@@ -1507,6 +1501,7 @@ export default function App() {
           dds={selectedDDSForView}
           status={status}
           ddsSemana={ddsSemana}
+          currentUser={currentUser}
           onClose={() => setSelectedDDSForView(null)}
           onDeleteSuccess={handleDeleteSuccess}
         />

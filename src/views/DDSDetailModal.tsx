@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { DDPSStatus, DDS, Participante } from '../types';
+import { DDPSStatus, DDS, Participante, Usuario } from '../types';
 import { api } from '../services/api';
 import { Button } from '../components/Button';
-import { X, MapPin, User, Users, ShieldCheck, FileDown, Trash2 } from 'lucide-react';
+import { X, MapPin, User, Users, ShieldCheck, FileDown, Trash2, AlertTriangle } from 'lucide-react';
 import { formatarDataHora } from '../utils/dateFormatter';
 import { gerarPDFSemanalDDPS } from '../utils/pdfGenerator';
 
@@ -10,11 +10,19 @@ interface DDSDetailModalProps {
   dds: DDS | null;
   status?: DDPSStatus | null;
   ddsSemana?: DDS[];
+  currentUser?: Usuario | null;
   onClose: () => void;
   onDeleteSuccess?: (idDDS: string) => void;
 }
 
-export const DDSDetailModal: React.FC<DDSDetailModalProps> = ({ dds, status = null, ddsSemana = [], onClose, onDeleteSuccess }) => {
+export const DDSDetailModal: React.FC<DDSDetailModalProps> = ({
+  dds,
+  status = null,
+  ddsSemana = [],
+  currentUser = null,
+  onClose,
+  onDeleteSuccess
+}) => {
   const [currentDDS, setCurrentDDS] = useState<DDS | null>(dds);
   const [participantes, setParticipantes] = useState<Participante[]>([]);
   const [isLoadingParts, setIsLoadingParts] = useState(false);
@@ -22,33 +30,31 @@ export const DDSDetailModal: React.FC<DDSDetailModalProps> = ({ dds, status = nu
 
   // Estados para exclusão
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
-  const [confirmText, setConfirmText] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const statusUpper = String(currentDDS?.status || '').toUpperCase();
   const isFinalizado = statusUpper === 'FINALIZADO' || statusUpper === 'REALIZADO' || statusUpper === 'CONCLUIDO';
+  const isAdmin = currentUser?.perfil === 'ADMIN';
 
   const handleDelete = async () => {
     if (!currentDDS) return;
-    if (isFinalizado) {
-      setDeleteError('DDPS finalizado é somente leitura e não pode ser excluído.');
-      return;
-    }
-    if (confirmText !== 'DELETAR') return;
+    if (isDeleting) return;
+
     setIsDeleting(true);
     setDeleteError(null);
     try {
-      const result = await api.deletarDDS(currentDDS.idDDS);
+      const result = await api.excluirDDS(currentDDS.idDDS);
       if (result.success) {
+        setIsConfirmingDelete(false);
         onDeleteSuccess?.(currentDDS.idDDS);
         onClose();
       } else {
-        throw new Error(result.message || 'Falha ao deletar o DDS.');
+        throw new Error(result.message || 'Falha ao excluir o DDPS.');
       }
     } catch (err: any) {
-      console.error('Erro ao deletar DDS:', err);
-      setDeleteError(err?.message || 'Falha ao deletar o DDS. Tente novamente.');
+      console.error('Erro ao excluir DDPS:', err);
+      setDeleteError(err?.message || 'Falha ao excluir o DDPS. Tente novamente.');
     } finally {
       setIsDeleting(false);
     }
@@ -104,9 +110,9 @@ export const DDSDetailModal: React.FC<DDSDetailModalProps> = ({ dds, status = nu
   const contagemRegular = participantes.filter((p) => p.emociograma === 'REGULAR').length;
   const contagemRuim = participantes.filter((p) => p.emociograma === 'RUIM').length;
 
-  if (isConfirmingDelete && !isFinalizado) {
+  if (isConfirmingDelete) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/85 backdrop-blur-sm animate-fadeIn" id="modal-deletar-confirmacao">
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/85 backdrop-blur-sm animate-fadeIn" id="modal-excluir-confirmacao">
         <div className="w-full max-w-md bg-slate-900 border-2 border-red-500/40 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col gap-5 text-center">
           <div className="mx-auto w-14 h-14 rounded-full bg-red-500/10 flex items-center justify-center text-red-400 border border-red-500/20">
             <Trash2 className="w-7 h-7" />
@@ -114,71 +120,52 @@ export const DDSDetailModal: React.FC<DDSDetailModalProps> = ({ dds, status = nu
           
           <div>
             <h3 className="text-xl font-extrabold text-white">
-              Tem certeza que deseja deletar este DDPS?
+              Excluir este DDPS?
             </h3>
             <p className="mt-2 text-sm text-slate-400">
-              Esta ação é permanente e excluirá o DDS e todas as suas participações e assinaturas no Google Sheets.
+              Esta ação excluirá o DDPS e todos os dados relacionados. Essa operação não poderá ser desfeita.
             </p>
           </div>
 
-          {/* Dados do DDS */}
+          {/* Dados identificadores do DDPS */}
           <div className="p-4 rounded-2xl bg-slate-850 border border-slate-800 text-left flex flex-col gap-2.5 text-xs">
             <div>
-              <span className="text-slate-400 block">ID_DDS</span>
-              <span className="text-white font-bold">{currentDDS.idDDS}</span>
+              <span className="text-slate-400 block font-medium">ID_DDS</span>
+              <span className="text-white font-bold font-mono text-sm">{currentDDS.idDDS}</span>
             </div>
             <div>
-              <span className="text-slate-400 block">Tema</span>
-              <span className="text-white font-semibold line-clamp-1">{currentDDS.tema}</span>
+              <span className="text-slate-400 block font-medium">Data</span>
+              <span className="text-white font-semibold">{formatarDataHora(currentDDS.data, currentDDS.horario)}</span>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <span className="text-slate-400 block">Data</span>
-                <span className="text-white font-semibold">{formatarDataHora(currentDDS.data, currentDDS.horario)}</span>
-              </div>
-              <div>
-                <span className="text-slate-400 block">Responsável</span>
-                <span className="text-white font-semibold truncate block">{currentDDS.responsavel || currentDDS.encarregadoNome || 'Não informado'}</span>
-              </div>
+            <div>
+              <span className="text-slate-400 block font-medium">Tema</span>
+              <span className="text-white font-semibold line-clamp-2">{currentDDS.tema}</span>
             </div>
-          </div>
-
-          <div className="p-3 rounded-xl bg-amber-500/10 text-amber-300 border border-amber-500/20 text-xs text-left leading-relaxed">
-            <strong>Atenção:</strong> A exclusão removerá permanentemente todos os registros do DDS, incluindo a lista de participantes e assinaturas.
-          </div>
-
-          <div className="flex flex-col gap-1.5 text-left">
-            <label htmlFor="confirm-delete-input" className="text-xs text-slate-400 font-bold">
-              Digite <span className="text-red-400 font-extrabold font-mono">DELETAR</span> para confirmar:
-            </label>
-            <input
-              id="confirm-delete-input"
-              type="text"
-              className="w-full bg-slate-950 text-white border border-slate-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-red-500 font-mono tracking-wider text-center"
-              placeholder="Digite DELETAR"
-              value={confirmText}
-              onChange={(e) => setConfirmText(e.target.value)}
-              disabled={isDeleting}
-            />
+            <div>
+              <span className="text-slate-400 block font-medium">Responsável</span>
+              <span className="text-white font-semibold truncate block">{currentDDS.responsavel || currentDDS.encarregadoNome || 'Não informado'}</span>
+            </div>
           </div>
 
           {deleteError && (
-            <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 p-2.5 rounded-lg text-left leading-snug">
-              {deleteError}
+            <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 p-3 rounded-xl text-left leading-snug flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-red-400 mt-0.5" />
+              <span>{deleteError}</span>
             </div>
           )}
 
-          <div className="flex flex-col gap-2 pt-2">
+          <div className="flex flex-col gap-2.5 pt-2">
             <Button
               type="button"
               variant="danger"
               size="md"
               fullWidth
-              disabled={confirmText !== 'DELETAR' || isDeleting}
+              disabled={isDeleting}
               onClick={handleDelete}
               id="btn-confirmar-exclusao"
+              className="py-3 text-sm font-bold uppercase tracking-wider bg-red-600 hover:bg-red-700 active:bg-red-800"
             >
-              {isDeleting ? 'Excluindo...' : 'CONFIRMAR EXCLUSÃO'}
+              {isDeleting ? 'EXCLUINDO...' : 'EXCLUIR'}
             </Button>
             <Button
               type="button"
@@ -188,12 +175,12 @@ export const DDSDetailModal: React.FC<DDSDetailModalProps> = ({ dds, status = nu
               disabled={isDeleting}
               onClick={() => {
                 setIsConfirmingDelete(false);
-                setConfirmText('');
                 setDeleteError(null);
               }}
               id="btn-cancelar-exclusao"
+              className="py-2.5 text-sm"
             >
-              Cancelar
+              CANCELAR
             </Button>
           </div>
         </div>
@@ -374,17 +361,21 @@ export const DDSDetailModal: React.FC<DDSDetailModalProps> = ({ dds, status = nu
           >
             {isGeneratingPdf ? 'GERANDO PDF...' : 'BAIXAR FOLHA SEMANAL (PDF)'}
           </Button>
-          {!isFinalizado && (
+          {isAdmin && (
             <Button
               type="button"
               variant="danger"
               size="md"
               fullWidth
-              onClick={() => setIsConfirmingDelete(true)}
+              onClick={() => {
+                setIsConfirmingDelete(true);
+                setDeleteError(null);
+              }}
               leftIcon={<Trash2 className="w-4 h-4 text-white" />}
-              className="py-2.5 text-xs font-bold uppercase tracking-wider text-white"
+              className="py-2.5 text-xs font-bold uppercase tracking-wider text-white bg-red-600 hover:bg-red-700 active:bg-red-800"
+              id="btn-excluir-ddps"
             >
-              Deletar DDPS
+              EXCLUIR DDPS
             </Button>
           )}
           <Button

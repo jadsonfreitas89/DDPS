@@ -335,6 +335,15 @@ function doGet(e) {
       var acao = e.parameter.acao || e.parameter.action;
       var token = e.parameter.token;
       
+      if (acao === 'sincronizar' || acao === 'sincronizarDados') {
+        exigirAutenticacao(token);
+        return respostaJSON(sincronizarDados());
+      }
+
+      if (acao === 'status') {
+        return respostaJSON(obterStatusGeral());
+      }
+
       if (acao === 'listarDDS') {
         exigirAutenticacao(token);
         return respostaJSON(listarDDS());
@@ -542,9 +551,15 @@ function doPost(e) {
         exigirAutenticacao(token);
         return respostaJSON(finalizarDDS(dados.idDDS));
 
+      case 'excluirDDS':
       case 'deletarDDS':
+        exigirPerfil(token, 'ADMIN');
+        return respostaJSON(excluirDDS(dados.idDDS));
+
+      case 'sincronizar':
+      case 'sincronizarDados':
         exigirAutenticacao(token);
-        return respostaJSON(deletarDDS(dados.idDDS));
+        return respostaJSON(sincronizarDados());
 
       case 'salvarRascunhoDDS':
         exigirAutenticacao(token);
@@ -614,44 +629,45 @@ function validarDDSNaoFinalizado(idDDS) {
 }
 
 /* ============================================================
- * DELETAR DDS
+ * EXCLUIR DDS (SOMENTE ADMIN - SUPORTA DDPS FINALIZADO)
  * ============================================================ */
 
-function deletarDDS(idDDS) {
+function excluirDDS(idDDS) {
   idDDS = String(idDDS || '').trim();
   if (!idDDS) {
-    throw new Error('Informe o ID_DDS.');
+    throw new Error('Informe o ID_DDS para exclusão.');
   }
 
-  validarDDSNaoFinalizado(idDDS);
-
+  // NOTA: A exclusão é permitida inclusive para DDPS FINALIZADO (somente ADMIN).
+  // Portanto, NÃO chamamos validarDDSNaoFinalizado(idDDS) aqui.
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  // 1. Verificar se o DDS existe na aba DDS
+  // 1. Localizar o DDS na aba DDS e verificar se realmente existe
   var sheetDDS = ss.getSheetByName(DDPS_ABAS.DDS);
   if (!sheetDDS) {
-    throw new Error('Aba DDS não encontrada.');
+    throw new Error('Aba DDS não encontrada na planilha.');
   }
 
   var lastRowDDS = sheetDDS.getLastRow();
-  var ddsEncontrado = false;
+  var ddsRowIndex = -1;
   
   if (lastRowDDS >= 2) {
     var valoresDDS = sheetDDS.getRange(2, 1, lastRowDDS - 1, 1).getValues();
-    for (var i = valoresDDS.length - 1; i >= 0; i--) {
+    for (var i = 0; i < valoresDDS.length; i++) {
       if (String(valoresDDS[i][0]).trim() === idDDS) {
-        sheetDDS.deleteRow(i + 2);
-        ddsEncontrado = true;
+        ddsRowIndex = i + 2; // Linha real na planilha
+        break;
       }
     }
   }
 
-  if (!ddsEncontrado) {
+  if (ddsRowIndex === -1) {
     throw new Error('DDS não encontrado para o ID: ' + idDDS);
   }
 
-  // 2. Excluir da aba PARTICIPANTES (coluna 1 é ID_DDS)
+  // 2. Excluir da aba PARTICIPANTES todos os registros relacionados (coluna 1 é ID_DDS)
   var sheetPart = ss.getSheetByName(DDPS_ABAS.PARTICIPANTES);
+  var qtdPartExcluidos = 0;
   if (sheetPart) {
     var lastRowPart = sheetPart.getLastRow();
     if (lastRowPart >= 2) {
@@ -659,13 +675,15 @@ function deletarDDS(idDDS) {
       for (var j = valoresPart.length - 1; j >= 0; j--) {
         if (String(valoresPart[j][0]).trim() === idDDS) {
           sheetPart.deleteRow(j + 2);
+          qtdPartExcluidos++;
         }
       }
     }
   }
 
-  // 3. Excluir da aba ASSINATURAS (coluna 2 é ID_DDS)
+  // 3. Excluir da aba ASSINATURAS todos os registros relacionados (coluna 2 é ID_DDS)
   var sheetAss = ss.getSheetByName(DDPS_ABAS.ASSINATURAS);
+  var qtdAssExcluidas = 0;
   if (sheetAss) {
     var lastRowAss = sheetAss.getLastRow();
     if (lastRowAss >= 2) {
@@ -673,16 +691,28 @@ function deletarDDS(idDDS) {
       for (var k = valoresAss.length - 1; k >= 0; k--) {
         if (String(valoresAss[k][0]).trim() === idDDS) {
           sheetAss.deleteRow(k + 2);
+          qtdAssExcluidas++;
         }
       }
     }
   }
 
+  // 4. Excluir o registro principal da aba DDS
+  sheetDDS.deleteRow(ddsRowIndex);
+
+  Logger.log('[DDPS] Excluído com sucesso ID_DDS=' + idDDS + ' | Participantes=' + qtdPartExcluidos + ' | Assinaturas=' + qtdAssExcluidas);
+
   return {
     sucesso: true,
     idDDS: idDDS,
-    mensagem: "DDPS deletado com sucesso"
+    participantesExcluidos: qtdPartExcluidos,
+    assinaturasExcluidas: qtdAssExcluidas,
+    mensagem: "DDPS excluído com sucesso."
   };
+}
+
+function deletarDDS(idDDS) {
+  return excluirDDS(idDDS);
 }
 
 
@@ -2006,6 +2036,24 @@ function listarDDS() {
     Logger.log('Aviso pré-carregamento mapa assinaturas: ' + errAss.message);
   }
 
+  // Pré-calcula a contagem de participantes por DDS em 1 única leitura rápida na coluna 1 de PARTICIPANTES
+  var mapQtdParticipantes = {};
+  try {
+    var sheetPart = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(DDPS_ABAS.PARTICIPANTES);
+    if (sheetPart && sheetPart.getLastRow() >= 2) {
+      var lastRowPart = sheetPart.getLastRow();
+      var dadosPart = sheetPart.getRange(2, 1, lastRowPart - 1, 1).getValues();
+      for (var p = 0; p < dadosPart.length; p++) {
+        var ddsIdP = String(dadosPart[p][0] || '').trim();
+        if (ddsIdP) {
+          mapQtdParticipantes[ddsIdP] = (mapQtdParticipantes[ddsIdP] || 0) + 1;
+        }
+      }
+    }
+  } catch (errPart) {
+    Logger.log('Aviso contagem participantes em listarDDS: ' + errPart.message);
+  }
+
   var lista = [];
 
   for (
@@ -2081,7 +2129,10 @@ function listarDDS() {
         numCols >= 14 ? String(dados[i][13] || '').trim() : '',
 
       assinaturaEncarregado:
-        mapAssinaturasEncarregado[idDDSStr] || ''
+        mapAssinaturasEncarregado[idDDSStr] || '',
+
+      participantesQtd:
+        mapQtdParticipantes[idDDSStr] || 0
     });
   }
 
@@ -2091,6 +2142,44 @@ function listarDDS() {
 
     dds:
       lista
+  };
+}
+
+/* ============================================================
+ * SINCRONIZAR DADOS (AGREGAÇÃO DE ALTA PERFORMANCE)
+ * ============================================================ */
+
+function sincronizarDados() {
+  var statusObj = obterStatusGeral();
+  var ddsRes = listarDDS();
+
+  return {
+    sucesso: true,
+    status: statusObj,
+    dds: ddsRes && ddsRes.dds ? ddsRes.dds : [],
+    timestamp: new Date().getTime()
+  };
+}
+
+function obterStatusGeral() {
+  var agora = new Date();
+  var semanaId = obterSemanaId(agora);
+  var semanaNum = parseInt(semanaId.replace(/^\d{4}-W?/, ''), 10) || 1;
+  var diaSemana = obterDiaSemanaTexto(agora);
+  var tz = Session.getScriptTimeZone() || 'America/Sao_Paulo';
+  var dia = Utilities.formatDate(agora, tz, 'dd/MM/yyyy');
+  var hora = Utilities.formatDate(agora, tz, 'HH:mm');
+
+  return {
+    semana: semanaNum,
+    semanaId: semanaId,
+    data: dia,
+    horario: hora,
+    dataHora: dia + ' ' + hora,
+    diaSemana: diaSemana,
+    diaSemanaNumero: agora.getDay(),
+    timestamp: agora.getTime(),
+    responsavelPadrao: 'Engenharia / SESMT'
   };
 }
 
@@ -4753,9 +4842,11 @@ function obterDadosSemanaPDF(semanaId, ddsIds) {
         if (ddsIdAss && arquivoAss) {
           if (tipoAss === 'ENCARREGADO') {
             mapAssinaturasEncarregado[ddsIdAss] = arquivoAss;
+            Logger.log('[DIAGNÓSTICO PDF BACKEND] Encarregado Assinatura Encontrada | idDDS: ' + ddsIdAss + ' | assinaturaExiste: true | assinaturaTamanho: ' + arquivoAss.length);
           } else {
             if (funcIdAss) {
               mapAssinaturasParticipante[ddsIdAss + '_' + funcIdAss] = arquivoAss;
+              Logger.log('[DIAGNÓSTICO PDF BACKEND] Participante Assinatura Encontrada em ASSINATURAS | idDDS: ' + ddsIdAss + ' | idFuncionario: ' + funcIdAss + ' | assinaturaExiste: true | assinaturaTamanho: ' + arquivoAss.length);
             }
           }
         }
@@ -4794,6 +4885,9 @@ function obterDadosSemanaPDF(semanaId, ddsIds) {
 
         if (pertence) {
           ddsIdsEncontradosMap[idDDSStr] = true;
+          var encId = numColsDDS >= 13 ? String(dadosDDS[d][12] || '').trim() : '';
+          var assEnc = mapAssinaturasEncarregado[idDDSStr] || (encId ? mapAssinaturasParticipante[idDDSStr + '_' + encId] : '') || '';
+
           ddsList.push({
             idDDS: idDDSStr,
             semanaId: ddsSemanaId,
@@ -4807,9 +4901,9 @@ function obterDadosSemanaPDF(semanaId, ddsIds) {
             observacoes: String(dadosDDS[d][9] || '').trim(),
             status: String(dadosDDS[d][10] || '').trim(),
             dataCriacao: dadosDDS[d][11],
-            encarregadoId: numColsDDS >= 13 ? String(dadosDDS[d][12] || '').trim() : '',
+            encarregadoId: encId,
             encarregadoNome: numColsDDS >= 14 ? String(dadosDDS[d][13] || '').trim() : '',
-            assinaturaEncarregado: mapAssinaturasEncarregado[idDDSStr] || '',
+            assinaturaEncarregado: assEnc,
             participantes: []
           });
         }
@@ -4826,28 +4920,28 @@ function obterDadosSemanaPDF(semanaId, ddsIds) {
       garantirSchemaParticipantes(sheetPart);
       var lastRowPart = sheetPart.getLastRow();
       var colCountPart = sheetPart.getLastColumn();
-      var numColsPart = Math.max(9, colCountPart);
+      var numColsPart = Math.max(8, colCountPart);
       var dadosPart = sheetPart.getRange(2, 1, lastRowPart - 1, numColsPart).getValues();
 
       // Agrupa os participantes por idDDS
       var mapParticipantesByDDS = {};
       for (var p = 0; p < dadosPart.length; p++) {
-        var pDDSId = String(dadosPart[p][1] || '').trim();
+        var pDDSId = String(dadosPart[p][0] || '').trim();
         if (!pDDSId || !ddsIdsEncontradosMap[pDDSId]) continue;
 
-        var pFuncId = String(dadosPart[p][2] || '').trim().toUpperCase();
-        var pNome = String(dadosPart[p][3] || '').trim();
-        var pEmociograma = String(dadosPart[p][4] || 'BOM').trim().toUpperCase();
-        var pAssinaturaSheet = String(dadosPart[p][5] || '').trim();
-        var pDataHora = dadosPart[p][6];
-        var pAusenteVal = numColsPart >= 8 ? dadosPart[p][7] : false;
+        var pFuncId = String(dadosPart[p][1] || '').trim().toUpperCase();
+        var pNome = String(dadosPart[p][2] || '').trim();
+        var pEmociograma = String(dadosPart[p][3] || 'BOM').trim().toUpperCase();
+        var pAssinaturaSheet = String(dadosPart[p][4] || '').trim();
+        var pDataHora = dadosPart[p][5];
+        var pAusenteVal = numColsPart >= 7 ? dadosPart[p][6] : false;
         var pAusente = pAusenteVal === true || String(pAusenteVal || '').toUpperCase() === 'SIM' || String(pAusenteVal || '').toUpperCase() === 'TRUE';
-        var pMotivo = numColsPart >= 9 ? String(dadosPart[p][8] || '').trim() : '';
+        var pMotivo = numColsPart >= 8 ? String(dadosPart[p][7] || '').trim() : '';
 
-        // Tenta obter a assinatura da aba ASSINATURAS se não estiver presente no registro de PARTICIPANTES
-        var pAssinatura = pAssinaturaSheet || mapAssinaturasParticipante[pDDSId + '_' + pFuncId] || '';
+        // Prioridade da assinatura: aba ASSINATURAS (oficial), depois coluna ASSINATURA de PARTICIPANTES
+        var pAssinatura = mapAssinaturasParticipante[pDDSId + '_' + pFuncId] || pAssinaturaSheet || '';
 
-        // Se o nome/cargo não estivem preenchidos, tenta completar via mapFuncionarios
+        // Se o nome/cargo não estiverem preenchidos, tenta completar via mapFuncionarios
         var funcCadastrado = mapFuncionarios[pFuncId];
         if (!pNome && funcCadastrado) {
           pNome = funcCadastrado.nome;
@@ -4869,6 +4963,8 @@ function obterDadosSemanaPDF(semanaId, ddsIds) {
           mapParticipantesByDDS[pDDSId] = [];
         }
         mapParticipantesByDDS[pDDSId].push(partObj);
+
+        Logger.log('[DIAGNÓSTICO PDF BACKEND] Participante Montado | idDDS: ' + pDDSId + ' | idFuncionario: ' + pFuncId + ' | assinaturaExiste: ' + (pAssinatura ? 'true' : 'false') + ' | assinaturaTamanho: ' + pAssinatura.length);
       }
 
       // Atribui participantes aos DDSs correspondentes

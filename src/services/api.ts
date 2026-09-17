@@ -1407,38 +1407,85 @@ export const api = {
         responsavel: item.responsavel || '',
         observacoes: item.observacoes || '',
         status: (item.status || 'pendente').toLowerCase() as any,
-        participantesQtd: Array.isArray(item.participantes)
-          ? item.participantes.length
-          : (typeof item.participantesQtd === 'number'
-            ? item.participantesQtd
+        encarregadoId: item.encarregadoId || '',
+        encarregadoNome: item.encarregadoNome || '',
+        assinaturaEncarregado: item.assinaturaEncarregado || '',
+        participantesQtd: typeof item.participantesQtd === 'number'
+          ? item.participantesQtd
+          : (Array.isArray(item.participantes)
+            ? item.participantes.length
             : (LocalDDSStorage.getParticipantes(String(item.idDDS || '')).length || 0))
       }));
 
-      // Carrega a contagem de participantes de cada DDS registrado
-      const enrichedList = await Promise.all(
-        baseDDSList.map(async (dds) => {
-          if (!dds.idDDS) return dds;
-          try {
-            const parts = await this.getParticipantes(dds.idDDS);
-            if (Array.isArray(parts)) {
-              return {
-                ...dds,
-                participantes: parts,
-                participantesQtd: parts.length
-              };
-            }
-          } catch (pErr) {
-            console.warn(`[DDPS API] Falha ao enriquecer participantes para ${dds.idDDS}:`, pErr);
-          }
-          return dds;
-        })
-      );
-
-      return enrichedList;
+      return baseDDSList;
     } catch (err) {
       console.error('[DDPS API] Erro ao listar DDS:', err);
       return LocalDDSStorage.getDDSList();
     }
+  },
+
+  // ==========================================================
+  // 3.2 SINCRONIZAR (CHAMADA AGREGADA OTIMIZADA)
+  // ==========================================================
+
+  async sincronizar(): Promise<{ dds: DDS[]; status: DDPSStatus | null }> {
+    console.log('[DDPS API] Sincronizando dados com backend');
+    try {
+      const res = await fetchWithFallback('sincronizar');
+      if (res.ok) {
+        const text = await res.text();
+        const data = JSON.parse(text);
+        if (data && (data.sucesso || data.success) && Array.isArray(data.dds)) {
+          const mappedDDS: DDS[] = data.dds.map((item: any) => ({
+            idDDS: String(item.idDDS || ''),
+            semana: item.semanaId || '',
+            diaSemana: item.diaSemana || '',
+            data: item.data || '',
+            horario: item.horario || '',
+            tema: item.tema || '',
+            conteudo: item.conteudo || '',
+            local: item.local || '',
+            responsavel: item.responsavel || '',
+            observacoes: item.observacoes || '',
+            status: (item.status || 'pendente').toLowerCase() as any,
+            encarregadoId: item.encarregadoId || '',
+            encarregadoNome: item.encarregadoNome || '',
+            assinaturaEncarregado: item.assinaturaEncarregado || '',
+            participantesQtd: typeof item.participantesQtd === 'number'
+              ? item.participantesQtd
+              : (Array.isArray(item.participantes)
+                ? item.participantes.length
+                : (LocalDDSStorage.getParticipantes(String(item.idDDS || '')).length || 0))
+          }));
+
+          let mappedStatus: DDPSStatus | null = null;
+          if (data.status) {
+            const fallback = getFallbackStatus();
+            mappedStatus = {
+              semana: data.status.semana ?? fallback.semana,
+              data: data.status.data ?? fallback.data,
+              horario: data.status.horario ?? fallback.horario,
+              dataHora: data.status.dataHora ?? fallback.dataHora,
+              diaSemana: data.status.diaSemana ?? fallback.diaSemana,
+              diaSemanaNumero: data.status.diaSemanaNumero ?? fallback.diaSemanaNumero,
+              timestamp: data.status.timestamp ?? fallback.timestamp,
+              responsavelPadrao: data.status.responsavelPadrao ?? fallback.responsavelPadrao
+            };
+          }
+
+          return { dds: mappedDDS, status: mappedStatus };
+        }
+      }
+    } catch (err) {
+      console.warn('[DDPS API] Fallback de sincronização agregada:', err);
+    }
+
+    // Fallback leve: listarDDS + getStatus (apenas 2 chamadas em paralelo sem N+1)
+    const [dds, status] = await Promise.all([
+      this.listarDDS(),
+      this.getStatus().catch(() => null)
+    ]);
+    return { dds, status };
   },
 
 
@@ -2354,8 +2401,17 @@ export const api = {
   },
 
   // ==========================================================
-  // 9b. DELETAR DDS
+  // 9b. EXCLUIR / DELETAR DDS (SOMENTE ADMIN)
   // ==========================================================
+
+  async excluirDDS(
+    idDDS: string
+  ): Promise<{
+    success: boolean;
+    message?: string;
+  }> {
+    return this.deletarDDS(idDDS);
+  },
 
   async deletarDDS(
     idDDS: string
@@ -2364,29 +2420,51 @@ export const api = {
     message?: string;
   }> {
     try {
-      const res =
+      let res =
         await postWithFallback({
           acao:
-            'deletarDDS',
+            'excluirDDS',
           action:
-            'deletarDDS',
+            'excluirDDS',
           idDDS
         });
 
-      const text =
+      let text =
         await res.text();
-
-      if (!res.ok) {
-        throw new Error(
-          `HTTP ${res.status}: ${text}`
-        );
-      }
 
       let data: any = {};
       try {
         data = JSON.parse(text);
       } catch {
         // Ignora se não for JSON
+      }
+
+      // Se a ação 'excluirDDS' não tiver sido reconhecida por um script mais antigo, tenta 'deletarDDS'
+      if (
+        data &&
+        (
+          data.mensagem === 'POST recebido com sucesso.' ||
+          data.message === 'POST recebido com sucesso.' ||
+          (data.erro && String(data.erro).includes('não reconhecida'))
+        )
+      ) {
+        res = await postWithFallback({
+          acao: 'deletarDDS',
+          action: 'deletarDDS',
+          idDDS
+        });
+        text = await res.text();
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = {};
+        }
+      }
+
+      if (!res.ok) {
+        throw new Error(
+          `HTTP ${res.status}: ${text}`
+        );
       }
 
       if (
@@ -2400,19 +2478,7 @@ export const api = {
           data.erro ||
           data.message ||
           data.mensagem ||
-          'Falha ao deletar DDS.'
-        );
-      }
-
-      if (
-        data &&
-        (
-          data.mensagem === 'POST recebido com sucesso.' ||
-          data.message === 'POST recebido com sucesso.'
-        )
-      ) {
-        throw new Error(
-          'Ação deletarDDS não foi reconhecida pelo Google Apps Script.'
+          'Falha ao excluir DDS.'
         );
       }
 
@@ -2425,13 +2491,13 @@ export const api = {
         message:
           data.message ||
           data.mensagem ||
-          'DDS deletado com sucesso.'
+          'DDPS excluído com sucesso.'
       };
 
     } catch (err: any) {
 
       console.warn(
-        '[DDPS API] Erro ao deletar DDS:',
+        '[DDPS API] Erro ao excluir DDS:',
         err
       );
 
@@ -2440,7 +2506,7 @@ export const api = {
           false,
         message:
           err?.message ||
-          'Falha ao deletar DDS.'
+          'Falha ao excluir DDPS.'
       };
     }
   },

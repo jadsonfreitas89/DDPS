@@ -380,9 +380,12 @@ export async function carregarDadosSemanaAcumulados(
       const motivo = isAusente ? (sanitizeMotivoAusencia(p.motivoAusencia) || 'Atestado') : '';
 
       // Registra para o dia específico (diaIndex)
+      const assString = isAusente ? '' : ((p.assinatura && String(p.assinatura).trim() !== '') ? String(p.assinatura) : '');
+      console.log(`[DIAGNÓSTICO PDF FRONTEND] Dia ${diaIndex} (${diaData.dia.nome}) | DDS: ${diaData.dds?.idDDS || 'S/ID'} | Func: ${pIdFunc} (${nomeLimpo}) | ASSINATURA RECEBIDA: ${!!p.assinatura}, TAMANHO: ${p.assinatura ? String(p.assinatura).length : 0}`);
+
       entry.dias[diaIndex] = {
         emociograma: isAusente ? '' : (p.emociograma ? String(p.emociograma).toUpperCase() : 'BOM'),
-        assinatura: isAusente ? '' : ((p.assinatura && String(p.assinatura).trim() !== '') ? String(p.assinatura) : ''),
+        assinatura: assString,
         presente: !isAusente,
         ausente: isAusente,
         motivoAusencia: motivo
@@ -915,6 +918,7 @@ export async function gerarPDFSemanalDDPS(
       } else if (isPresent) {
         // Se houver assinatura digital (base64) ou marcação de presença
         if (reg.assinatura && reg.assinatura.startsWith('data:image')) {
+          console.log(`[DIAGNÓSTICO PDF FRONTEND] Desenhando assinatura participante ${part.idFuncionario} dia ${diaIdx}: ASSINATURA ENVIADA AO PDF: true, TAMANHO: ${reg.assinatura.length}`);
           try {
             doc.addImage(
               reg.assinatura,
@@ -930,6 +934,7 @@ export async function gerarPDFSemanalDDPS(
             doc.text('✓ Assinado', rubricaX + rubricaColW / 2, rowY + 3.1, { align: 'center' });
           }
         } else {
+          console.log(`[DIAGNÓSTICO PDF FRONTEND] Participante ${part.idFuncionario} dia ${diaIdx} sem imagem Base64: ASSINATURA ENVIADA AO PDF: false`);
           doc.setFont('helvetica', 'normal');
           doc.setFontSize(5.5);
           doc.text('✓', rubricaX + rubricaColW / 2, rowY + 3.1, { align: 'center' });
@@ -958,6 +963,7 @@ export async function gerarPDFSemanalDDPS(
     doc.text('Ass:', diaX + 1.5, encRowY + 3.4);
 
     if (d.dds && d.dds.assinaturaEncarregado && String(d.dds.assinaturaEncarregado).startsWith('data:image')) {
+      console.log(`[DIAGNÓSTICO PDF FRONTEND] Desenhando assinatura encarregado dia ${diaIdx}: ASSINATURA ENVIADA AO PDF: true, TAMANHO: ${String(d.dds.assinaturaEncarregado).length}`);
       try {
         doc.addImage(
           String(d.dds.assinaturaEncarregado),
@@ -970,6 +976,8 @@ export async function gerarPDFSemanalDDPS(
       } catch (err) {
         console.warn(`[PDF] Erro ao renderizar assinatura encarregado do dia ${diaIdx}:`, err);
       }
+    } else {
+      console.log(`[DIAGNÓSTICO PDF FRONTEND] Encarregado dia ${diaIdx} sem imagem Base64: ASSINATURA ENVIADA AO PDF: false`);
     }
   });
 
