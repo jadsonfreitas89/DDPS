@@ -256,8 +256,9 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
 
     try {
       await onConfirm(dataUrl);
-    } catch (error) {
+    } catch (error: any) {
       console.error('[DDPS] Erro ao confirmar assinatura:', error);
+      setAlertMessage(error?.message || 'Falha ao salvar a nova assinatura.');
     }
   };
 

@@ -48,6 +48,7 @@ import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { ConfirmationModal } from './components/ConfirmationModal';
 import { getSemanaId, pertenceASemana } from './utils/weekUtils';
 import { sanitizeMotivoAusencia } from './utils/absenceUtils';
+import { isDraftFinalized, shouldBlockNewDDS, isDraftForToday } from './utils/draftUtils';
 
 import {
   CheckCircle,
@@ -188,15 +189,30 @@ export default function App() {
       const draft = localStorage.getItem(getDraftStorageKey());
       if (draft) {
         const parsed = JSON.parse(draft);
-        if (parsed.activeDDS) {
+        if (parsed.activeDDS && !isDraftFinalized(parsed.activeDDS, allDDS)) {
           setActiveDDS(parsed.activeDDS);
           setParticipantesMap(parsed.participantesMap || {});
+        } else {
+          localStorage.removeItem(getDraftStorageKey());
+          setActiveDDS(null);
+          setParticipantesMap({});
         }
       }
     } catch {
       // Ignora erro no rascunho
     }
-  }, []);
+  }, [allDDS]);
+
+  // Monitora e invalida rascunho ativo se o status for alterado para finalizado
+  useEffect(() => {
+    if (activeDDS && isDraftFinalized(activeDDS, allDDS)) {
+      console.log('[DDPS] Rascunho ativo já finalizado. Limpando rascunho...');
+      localStorage.removeItem(getDraftStorageKey());
+      api.salvarRascunhoDDS('').catch(() => {});
+      setActiveDDS(null);
+      setParticipantesMap({});
+    }
+  }, [activeDDS, allDDS]);
 
   // ==========================================================
   // SALVA RASCUNHO DO DDS ATIVO
@@ -206,7 +222,7 @@ export default function App() {
     // Só permite salvar ou limpar o rascunho APÓS o carregamento inicial do rascunho remoto terminar.
     if (!isRemoteDraftLoaded) return;
 
-    if (activeDDS) {
+    if (activeDDS && !isDraftFinalized(activeDDS, allDDS)) {
       const draftData = JSON.stringify({
         activeDDS,
         participantesMap,
@@ -231,7 +247,7 @@ export default function App() {
 
       return () => clearTimeout(timer);
     } else {
-      // Se não há DDS ativo, limpa o rascunho
+      // Se não há DDS ativo válido, limpa o rascunho
       localStorage.removeItem(getDraftStorageKey());
 
       const limparRascunhoRemoto = async () => {
@@ -247,7 +263,9 @@ export default function App() {
     activeDDS,
     participantesMap,
     currentScreen,
-    isRemoteDraftLoaded
+    isRemoteDraftLoaded,
+    status,
+    allDDS
   ]);
 
   // ==========================================================
@@ -342,16 +360,25 @@ export default function App() {
     setIsLoading(true);
     await loadInitialData();
     
-    // Tenta carregar rascunho remoto sincronizado (multi-dispositivo)
+    // Tenta carregar rascunho remoto sincronizado (multi-dispositivo) com validação de data/status
     try {
       const backendDraftRes = await api.obterRascunhoDDS();
       if (backendDraftRes.sucesso && backendDraftRes.rascunho) {
         const parsed = JSON.parse(backendDraftRes.rascunho);
-        if (parsed.activeDDS) {
+        if (parsed.activeDDS && !isDraftFinalized(parsed.activeDDS, allDDS)) {
           setActiveDDS(parsed.activeDDS);
           setParticipantesMap(parsed.participantesMap || {});
           setCurrentScreen('inicio');
+        } else {
+          localStorage.removeItem(getDraftStorageKey());
+          await api.salvarRascunhoDDS('').catch(() => {});
+          setActiveDDS(null);
+          setParticipantesMap({});
         }
+      } else {
+        localStorage.removeItem(getDraftStorageKey());
+        setActiveDDS(null);
+        setParticipantesMap({});
       }
     } catch (e) {
       console.warn('[DDPS] Erro ao carregar rascunho remoto no login:', e);
@@ -385,11 +412,20 @@ export default function App() {
             const backendDraftRes = await api.obterRascunhoDDS();
             if (backendDraftRes.sucesso && backendDraftRes.rascunho) {
               const parsed = JSON.parse(backendDraftRes.rascunho);
-              if (parsed.activeDDS) {
+              if (parsed.activeDDS && !isDraftFinalized(parsed.activeDDS, allDDS)) {
                 setActiveDDS(parsed.activeDDS);
                 setParticipantesMap(parsed.participantesMap || {});
                 setCurrentScreen('inicio');
+              } else {
+                localStorage.removeItem(getDraftStorageKey());
+                await api.salvarRascunhoDDS('').catch(() => {});
+                setActiveDDS(null);
+                setParticipantesMap({});
               }
+            } else {
+              localStorage.removeItem(getDraftStorageKey());
+              setActiveDDS(null);
+              setParticipantesMap({});
             }
           } catch (e) {
             console.warn('[DDPS] Erro ao carregar rascunho remoto na inicialização:', e);
@@ -444,7 +480,7 @@ export default function App() {
   // ==========================================================
 
   const handleStartNovoDDS = () => {
-    if (activeDDS) {
+    if (activeDDS && shouldBlockNewDDS(activeDDS, status?.data, allDDS)) {
       setShowDiscardAndNewModal(true);
     } else {
       executeStartNovoDDS();

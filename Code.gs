@@ -565,6 +565,43 @@ function doPost(e) {
   }
 }
 
+/**
+ * VERIFICA SE O DDPS JÁ ESTÁ FINALIZADO.
+ * Se o status do DDPS for FINALIZADO (ou REALIZADO/CONCLUIDO), lança um Erro bloqueando qualquer alteração.
+ */
+function validarDDSNaoFinalizado(idDDS) {
+  if (!idDDS) return;
+  idDDS = String(idDDS).trim();
+  if (!idDDS) return;
+
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName(DDPS_ABAS.DDS);
+    if (!sheet) return;
+
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return;
+
+    var colCount = sheet.getLastColumn();
+    var range = sheet.getRange(2, 1, lastRow - 1, Math.min(14, colCount));
+    var valores = range.getValues();
+
+    for (var i = 0; i < valores.length; i++) {
+      var rowId = String(valores[i][0] || '').trim();
+      if (rowId === idDDS) {
+        var status = String(valores[i][10] || '').trim().toUpperCase();
+        if (status === 'FINALIZADO' || status === 'REALIZADO' || status === 'CONCLUIDO') {
+          throw new Error('DDPS finalizado não pode ser alterado ou excluído. O registro está encerrado e é somente leitura.');
+        }
+        break;
+      }
+    }
+  } catch (err) {
+    if (err.message && err.message.indexOf('DDPS finalizado') !== -1) {
+      throw err;
+    }
+  }
+}
 
 /* ============================================================
  * DELETAR DDS
@@ -575,6 +612,8 @@ function deletarDDS(idDDS) {
   if (!idDDS) {
     throw new Error('Informe o ID_DDS.');
   }
+
+  validarDDSNaoFinalizado(idDDS);
 
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
@@ -2043,6 +2082,8 @@ function finalizarDDS(idDDS) {
     );
   }
 
+  validarDDSNaoFinalizado(idDDS);
+
   var sheet =
     SpreadsheetApp
       .getActiveSpreadsheet()
@@ -2102,6 +2143,12 @@ function finalizarDDS(idDDS) {
         );
 
       SpreadsheetApp.flush();
+
+      try {
+        salvarRascunhoDDS('');
+      } catch (errRasc) {
+        Logger.log('Aviso ao limpar rascunho em finalizarDDS: ' + errRasc.message);
+      }
 
       Logger.log(
         'DDS FINALIZADO -> ' +
@@ -2272,6 +2319,8 @@ function registrarParticipante(
       'Informe o ID_DDS.'
     );
   }
+
+  validarDDSNaoFinalizado(idDDS);
 
   if (!idFuncionario) {
 
@@ -2616,6 +2665,11 @@ function salvarDDSCompleto(dados) {
   dados._execId = execId;
   var idDDS = String(dados.idDDS || dados.id || '').trim();
 
+  // Se já possui ID_DDS, valida se não está finalizado antes de alterar
+  if (idDDS) {
+    validarDDSNaoFinalizado(idDDS);
+  }
+
   Logger.log('========== INÍCIO SALVAR DDPS ==========');
   Logger.log('EXEC_ID=' + execId);
   Logger.log('ID_DDS=' + idDDS);
@@ -2713,6 +2767,8 @@ function registrarParticipantesEmLote(
   if (!idDDS) {
     throw new Error('Informe o ID_DDS.');
   }
+
+  validarDDSNaoFinalizado(idDDS);
 
   if (!Array.isArray(participantes) || participantes.length === 0) {
     return {
@@ -3068,11 +3124,9 @@ function obterParticipantesDDS(idDDS) {
       }
     }
 
-    // Se assVal estiver vazia ou 'PRESENTE', busca a assinatura real de ASSINATURAS do DDS
-    if (!assVal || assVal.toUpperCase() === 'PRESENTE') {
-      if (mapAssinaturas[funcId]) {
-        assVal = mapAssinaturas[funcId];
-      }
+    // Se houver assinatura gravada na aba ASSINATURAS, ela é a fonte oficial principal
+    if (mapAssinaturas[funcId]) {
+      assVal = mapAssinaturas[funcId];
     }
 
     participantes.push({
@@ -3540,6 +3594,8 @@ function registrarAssinatura(
     );
   }
 
+  validarDDSNaoFinalizado(idDDS);
+
   if (!idFuncionario) {
 
     throw new Error(
@@ -3888,6 +3944,8 @@ function sincronizarAssinaturaParticipante(
   idFuncionario,
   arquivo
 ) {
+
+  validarDDSNaoFinalizado(idDDS);
 
   var sheet =
     SpreadsheetApp
@@ -4929,6 +4987,8 @@ function garantirSchemaDDS(sheet) {
 }
 
 function removerAssinaturaEncarregado(idDDS) {
+  if (!idDDS) return;
+  validarDDSNaoFinalizado(idDDS);
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(DDPS_ABAS.ASSINATURAS);
   if (!sheet) return;
   var lastRow = sheet.getLastRow();
@@ -4981,6 +5041,8 @@ function atualizarDDS(dados) {
   if (!idDDS) {
     throw new Error('ID_DDS não informado.');
   }
+  
+  validarDDSNaoFinalizado(idDDS);
   
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(DDPS_ABAS.DDS);
   if (!sheet) {
@@ -6120,14 +6182,56 @@ function obterRascunhoDDS() {
   }
   
   var lastRow = sheet.getLastRow();
+  var rascunhoStr = '';
   if (lastRow >= 2) {
     var dados = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
     for (var i = 0; i < dados.length; i++) {
       if (String(dados[i][0]).trim() === 'RASCUNHO_DDS') {
-        return { sucesso: true, rascunho: dados[i][1] };
+        rascunhoStr = String(dados[i][1] || '').trim();
+        break;
       }
     }
   }
-  
-  return { sucesso: true, rascunho: '' };
+
+  if (!rascunhoStr) {
+    return { sucesso: true, rascunho: '' };
+  }
+
+  // Tenta analisar o JSON do rascunho para validações de negócio estritas
+  try {
+    var draftObj = JSON.parse(rascunhoStr);
+    if (draftObj && draftObj.activeDDS) {
+      var dds = draftObj.activeDDS;
+      var idDDS = String(dds.idDDS || dds.id || '').trim();
+      var statusDDS = String(dds.status || '').toUpperCase();
+
+      // 1. Se o status no rascunho já for FINALIZADO / REALIZADO / CONCLUIDO
+      if (statusDDS === 'FINALIZADO' || statusDDS === 'REALIZADO' || statusDDS === 'CONCLUIDO') {
+        salvarRascunhoDDS('');
+        return { sucesso: true, rascunho: '' };
+      }
+
+      // 2. Se o idDDS do rascunho já existir na aba DDS com STATUS = 'FINALIZADO'
+      if (idDDS) {
+        var sheetDDS = ss.getSheetByName(DDPS_ABAS.DDS);
+        if (sheetDDS && sheetDDS.getLastRow() >= 2) {
+          var valuesDDS = sheetDDS.getRange(2, 1, sheetDDS.getLastRow() - 1, 11).getValues();
+          for (var k = 0; k < valuesDDS.length; k++) {
+            if (String(valuesDDS[k][0]).trim() === idDDS) {
+              var realStatus = String(valuesDDS[k][10] || '').toUpperCase();
+              if (realStatus === 'FINALIZADO' || realStatus === 'REALIZADO' || realStatus === 'CONCLUIDO') {
+                salvarRascunhoDDS('');
+                return { sucesso: true, rascunho: '' };
+              }
+              break;
+            }
+          }
+        }
+      }
+    }
+  } catch (errParse) {
+    Logger.log('Aviso ao validar rascunho em obterRascunhoDDS: ' + errParse.message);
+  }
+
+  return { sucesso: true, rascunho: rascunhoStr };
 }
