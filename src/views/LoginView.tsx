@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { HardHat, Lock, User, AlertCircle, Loader2, KeyRound, ArrowLeft, Copy, Check, ShieldCheck } from 'lucide-react';
+import { HardHat, Lock, User, AlertCircle, Loader2, KeyRound, ArrowLeft, Copy, Check, ShieldCheck, Eye, EyeOff } from 'lucide-react';
 import { Usuario } from '../types';
 import { api } from '../services/api';
 import { PWAInstallButton } from '../components/PWAInstallButton';
@@ -11,6 +11,16 @@ interface LoginViewProps {
 export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
   const [usuario, setUsuario] = useState('');
   const [senha, setSenha] = useState('');
+  
+  // Visibilidade de senha
+  const [mostrarSenha, setMostrarSenha] = useState(false);
+  const [mostrarNovaSenha, setMostrarNovaSenha] = useState(false);
+  const [mostrarConfirmarSenha, setMostrarConfirmarSenha] = useState(false);
+
+  // Sincronização inicial pós-login
+  const [isSyncingInitial, setIsSyncingInitial] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [loggedInUserCache, setLoggedInUserCache] = useState<Usuario | null>(null);
   
   // Modos de Primeiro Acesso e Recuperação
   const [isPrimeiroAcesso, setIsPrimeiroAcesso] = useState(false);
@@ -27,6 +37,29 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
   const [erro, setErro] = useState<string | null>(null);
   const [sucessoMsg, setSucessoMsg] = useState<string | null>(null);
 
+  const executarSincronizacaoInicial = async (user: Usuario) => {
+    setIsSyncingInitial(true);
+    setSyncError(null);
+    setSucessoMsg('Login realizado com sucesso.\n🔄 Sincronizando dados...');
+
+    try {
+      // Sincronização inicial completa obrigatória antes de liberar o acesso
+      await Promise.all([
+        api.sincronizar(),
+        api.getFuncionarios()
+      ]);
+
+      setSucessoMsg('✓ Dados sincronizados.');
+      setTimeout(() => {
+        onLoginSuccess(user);
+      }, 600);
+    } catch (err: any) {
+      console.error('[LoginView] Erro na sincronização inicial:', err);
+      setIsSyncingInitial(false);
+      setSyncError(err?.message || 'Não foi possível sincronizar os dados com o servidor.');
+    }
+  };
+
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!usuario.trim()) {
@@ -36,6 +69,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
 
     setLoading(true);
     setErro(null);
+    setSyncError(null);
     setSucessoMsg(null);
 
     try {
@@ -44,17 +78,19 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
       if (res.sucesso) {
         if (res.primeiroAcesso) {
           setIsPrimeiroAcesso(true);
+          setLoading(false);
           setSucessoMsg('Credencial/Primeiro acesso validado! Por favor, crie sua nova senha pessoal.');
         } else if (res.usuario) {
-          onLoginSuccess(res.usuario);
+          setLoggedInUserCache(res.usuario);
+          await executarSincronizacaoInicial(res.usuario);
         }
       } else {
+        setLoading(false);
         setErro(res.mensagem || 'Usuário ou senha inválidos.');
       }
     } catch (err: any) {
-      setErro(err.message || 'Erro ao conectar ao servidor. Tente novamente.');
-    } finally {
       setLoading(false);
+      setErro(err.message || 'Erro ao conectar ao servidor. Tente novamente.');
     }
   };
 
@@ -81,14 +117,15 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
     try {
       const res = await api.definirPrimeiraSenha(usuario.trim(), novaSenha.trim());
       if (res.sucesso && res.usuario) {
-        onLoginSuccess(res.usuario);
+        setLoggedInUserCache(res.usuario);
+        await executarSincronizacaoInicial(res.usuario);
       } else {
+        setLoading(false);
         setErro(res.mensagem || 'Erro ao criar a senha. Tente novamente.');
       }
     } catch (err: any) {
-      setErro(err.message || 'Erro de comunicação ao criar senha.');
-    } finally {
       setLoading(false);
+      setErro(err.message || 'Erro de comunicação ao criar senha.');
     }
   };
 
@@ -178,7 +215,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
         {isPrimeiroAcesso ? (
           <form onSubmit={handleCriarSenhaSubmit} className="space-y-5">
             {sucessoMsg && (
-              <div className="p-3.5 rounded-xl bg-yellow-400/10 border border-yellow-400/30 text-yellow-400 text-xs font-medium flex items-center gap-2.5">
+              <div className="p-3.5 rounded-xl bg-yellow-400/10 border border-yellow-400/30 text-yellow-400 text-xs font-medium whitespace-pre-line flex items-center gap-2.5">
                 <KeyRound className="w-5 h-5 shrink-0" />
                 <span>{sucessoMsg}</span>
               </div>
@@ -205,14 +242,24 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                   <Lock className="w-5 h-5" />
                 </div>
                 <input
-                  type="password"
+                  type={mostrarNovaSenha ? 'text' : 'password'}
                   value={novaSenha}
                   onChange={(e) => setNovaSenha(e.target.value)}
                   placeholder="Crie sua nova senha"
-                  disabled={loading}
+                  disabled={loading || isSyncingInitial}
                   autoFocus
-                  className="w-full bg-gray-900/80 border border-gray-700 rounded-xl pl-11 pr-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400 transition-colors"
+                  className="w-full bg-gray-900/80 border border-gray-700 rounded-xl pl-11 pr-12 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400 transition-colors"
                 />
+                <button
+                  type="button"
+                  onClick={() => setMostrarNovaSenha(!mostrarNovaSenha)}
+                  disabled={loading || isSyncingInitial}
+                  aria-label={mostrarNovaSenha ? "Ocultar senha" : "Mostrar senha"}
+                  title={mostrarNovaSenha ? "Ocultar senha" : "Mostrar senha"}
+                  className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-gray-400 hover:text-white transition-colors p-1"
+                >
+                  {mostrarNovaSenha ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
               </div>
             </div>
 
@@ -225,25 +272,60 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                   <Lock className="w-5 h-5" />
                 </div>
                 <input
-                  type="password"
+                  type={mostrarConfirmarSenha ? 'text' : 'password'}
                   value={confirmarSenha}
                   onChange={(e) => setConfirmarSenha(e.target.value)}
                   placeholder="Digite novamente a nova senha"
-                  disabled={loading}
-                  className="w-full bg-gray-900/80 border border-gray-700 rounded-xl pl-11 pr-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400 transition-colors"
+                  disabled={loading || isSyncingInitial}
+                  className="w-full bg-gray-900/80 border border-gray-700 rounded-xl pl-11 pr-12 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400 transition-colors"
                 />
+                <button
+                  type="button"
+                  onClick={() => setMostrarConfirmarSenha(!mostrarConfirmarSenha)}
+                  disabled={loading || isSyncingInitial}
+                  aria-label={mostrarConfirmarSenha ? "Ocultar senha" : "Mostrar senha"}
+                  title={mostrarConfirmarSenha ? "Ocultar senha" : "Mostrar senha"}
+                  className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-gray-400 hover:text-white transition-colors p-1"
+                >
+                  {mostrarConfirmarSenha ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
               </div>
             </div>
 
+            {syncError && (
+              <div className="p-4 rounded-xl bg-yellow-400/10 border border-yellow-400/40 space-y-3">
+                <div className="flex items-center gap-2.5 text-yellow-400 text-xs font-medium">
+                  <AlertCircle className="w-5 h-5 shrink-0" />
+                  <span>{syncError}</span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => loggedInUserCache && executarSincronizacaoInicial(loggedInUserCache)}
+                    className="flex-1 py-2.5 px-3 bg-yellow-400 hover:bg-yellow-300 text-black font-bold text-xs uppercase tracking-wider rounded-lg transition-colors"
+                  >
+                    Tentar Novamente
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => loggedInUserCache && onLoginSuccess(loggedInUserCache)}
+                    className="py-2.5 px-3 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white font-medium text-xs rounded-lg transition-colors"
+                  >
+                    Entrar (Ignorar)
+                  </button>
+                </div>
+              </div>
+            )}
+
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || isSyncingInitial}
               className="w-full py-3.5 px-4 bg-yellow-400 hover:bg-yellow-300 disabled:bg-gray-700 disabled:text-gray-500 text-black font-black uppercase text-sm tracking-wider rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
             >
-              {loading ? (
+              {loading || isSyncingInitial ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>CRIANDO SENHA...</span>
+                  <span>{isSyncingInitial ? 'SINCRONIZANDO...' : 'CRIANDO SENHA...'}</span>
                 </>
               ) : (
                 <span>CRIAR NOVA SENHA</span>
@@ -253,7 +335,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
             <button
               type="button"
               onClick={voltarParaLogin}
-              disabled={loading}
+              disabled={loading || isSyncingInitial}
               className="w-full py-2 text-xs text-gray-400 hover:text-white transition-colors flex items-center justify-center gap-1.5"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -358,6 +440,13 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
         ) : (
           /* Form de Login Padrão */
           <form onSubmit={handleLoginSubmit} className="space-y-5">
+            {sucessoMsg && (
+              <div className="p-3.5 rounded-xl bg-yellow-400/10 border border-yellow-400/30 text-yellow-400 text-xs font-medium whitespace-pre-line flex items-center gap-2.5">
+                <ShieldCheck className="w-5 h-5 shrink-0" />
+                <span>{sucessoMsg}</span>
+              </div>
+            )}
+
             {erro && (
               <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-medium flex items-center gap-2.5">
                 <AlertCircle className="w-5 h-5 shrink-0" />
@@ -378,7 +467,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                   value={usuario}
                   onChange={(e) => setUsuario(e.target.value)}
                   placeholder="Informe seu usuário"
-                  disabled={loading}
+                  disabled={loading || isSyncingInitial}
                   autoFocus
                   className="w-full bg-gray-900/80 border border-gray-700 rounded-xl pl-11 pr-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400 transition-colors"
                 />
@@ -397,6 +486,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                     setErro(null);
                     setSucessoMsg(null);
                   }}
+                  disabled={loading || isSyncingInitial}
                   className="text-xs text-yellow-400 hover:text-yellow-300 transition-colors font-medium"
                 >
                   Esqueci minha senha
@@ -407,25 +497,60 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                   <Lock className="w-5 h-5" />
                 </div>
                 <input
-                  type="password"
+                  type={mostrarSenha ? 'text' : 'password'}
                   value={senha}
                   onChange={(e) => setSenha(e.target.value)}
                   placeholder="Informe sua senha"
-                  disabled={loading}
-                  className="w-full bg-gray-900/80 border border-gray-700 rounded-xl pl-11 pr-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400 transition-colors"
+                  disabled={loading || isSyncingInitial}
+                  className="w-full bg-gray-900/80 border border-gray-700 rounded-xl pl-11 pr-12 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400 transition-colors"
                 />
+                <button
+                  type="button"
+                  onClick={() => setMostrarSenha(!mostrarSenha)}
+                  disabled={loading || isSyncingInitial}
+                  aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
+                  title={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
+                  className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-gray-400 hover:text-white transition-colors p-1"
+                >
+                  {mostrarSenha ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
               </div>
             </div>
 
+            {syncError && (
+              <div className="p-4 rounded-xl bg-yellow-400/10 border border-yellow-400/40 space-y-3">
+                <div className="flex items-center gap-2.5 text-yellow-400 text-xs font-medium">
+                  <AlertCircle className="w-5 h-5 shrink-0" />
+                  <span>{syncError}</span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => loggedInUserCache && executarSincronizacaoInicial(loggedInUserCache)}
+                    className="flex-1 py-2.5 px-3 bg-yellow-400 hover:bg-yellow-300 text-black font-bold text-xs uppercase tracking-wider rounded-lg transition-colors"
+                  >
+                    Tentar Novamente
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => loggedInUserCache && onLoginSuccess(loggedInUserCache)}
+                    className="py-2.5 px-3 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white font-medium text-xs rounded-lg transition-colors"
+                  >
+                    Entrar (Ignorar)
+                  </button>
+                </div>
+              </div>
+            )}
+
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || isSyncingInitial}
               className="w-full py-3.5 px-4 bg-yellow-400 hover:bg-yellow-300 disabled:bg-gray-700 disabled:text-gray-500 text-black font-black uppercase text-sm tracking-wider rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
             >
-              {loading ? (
+              {loading || isSyncingInitial ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>ENTRANDO...</span>
+                  <span>{isSyncingInitial ? 'SINCRONIZANDO...' : 'ENTRANDO...'}</span>
                 </>
               ) : (
                 <span>ENTRAR</span>
