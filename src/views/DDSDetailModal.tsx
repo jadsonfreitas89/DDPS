@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { DDPSStatus, DDS, Participante, Usuario } from '../types';
 import { api } from '../services/api';
 import { Button } from '../components/Button';
-import { X, MapPin, User, Users, ShieldCheck, FileDown, Trash2, AlertTriangle } from 'lucide-react';
+import { X, MapPin, User, Users, ShieldCheck, FileDown, Trash2, AlertTriangle, CloudUpload, Check } from 'lucide-react';
 import { formatarDataHora } from '../utils/dateFormatter';
 import { gerarPDFSemanalDDPS } from '../utils/pdfGenerator';
 
@@ -202,6 +202,17 @@ export const DDSDetailModal: React.FC<DDSDetailModalProps> = ({
                 <span className="px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-300 border border-amber-500/40 text-xs font-bold uppercase flex items-center gap-1">
                   <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
                   SOMENTE LEITURA
+                </span>
+              )}
+              {currentDDS.syncStatus === 'pending' || String(currentDDS.idDDS).startsWith('DDS-OFFLINE-') ? (
+                <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-bold uppercase flex items-center gap-1" title="Gravado no dispositivo. Aguardando sincronização com a planilha.">
+                  <CloudUpload className="w-3.5 h-3.5 text-amber-400" />
+                  Salvo no dispositivo (Aguardando sync)
+                </span>
+              ) : (
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 text-xs font-bold uppercase flex items-center gap-1">
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  Sincronizado na planilha
                 </span>
               )}
               <span className="text-xs text-slate-400">

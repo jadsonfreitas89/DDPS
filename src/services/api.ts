@@ -1,5 +1,6 @@
 import { DDPSStatus, Funcionario, DDS, Participante, Emociograma, Usuario, PerfilUsuario } from '../types';
 import { sanitizeMotivoAusencia } from '../utils/absenceUtils';
+import { offlineStorage } from './offlineStorage';
 
 const TIMEOUT_MS = 60000;
 const AUTH_TOKEN_KEY = 'ddps_auth_token';
@@ -888,6 +889,9 @@ export const api = {
       const data = await response.json();
       if (data.sucesso && data.token) {
         setStoredAuthToken(data.token);
+        if (data.usuario) {
+          await offlineStorage.saveCachedUser(data.usuario);
+        }
       }
       return data;
     } catch (err: any) {
@@ -906,6 +910,9 @@ export const api = {
       const data = await response.json();
       if (data.sucesso && data.token) {
         setStoredAuthToken(data.token);
+        if (data.usuario) {
+          await offlineStorage.saveCachedUser(data.usuario);
+        }
       }
       return data;
     } catch (err: any) {
@@ -924,23 +931,40 @@ export const api = {
       console.warn('[DDPS API] Erro no logout:', err);
     } finally {
       setStoredAuthToken(null);
+      await offlineStorage.saveCachedUser(null);
     }
   },
 
-  async validarSessao(): Promise<{ sucesso: boolean; usuario?: Usuario; mensagem?: string }> {
+  async validarSessao(): Promise<{ sucesso: boolean; usuario?: Usuario; mensagem?: string; offline?: boolean }> {
     const token = getStoredAuthToken();
     if (!token) {
       return { sucesso: false, mensagem: 'Sem token armazenado.' };
     }
+
+    // Se estiver sem conexão no momento, valida imediatamente através do cache persistente offline
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      const cachedUser = await offlineStorage.getCachedUser();
+      if (cachedUser) {
+        return { sucesso: true, usuario: cachedUser, offline: true };
+      }
+    }
+
     try {
       const response = await postWithFallback({ acao: 'validarSessao', token });
       const data = await response.json();
       if (!data.sucesso) {
         setStoredAuthToken(null);
+        await offlineStorage.saveCachedUser(null);
+      } else if (data.usuario) {
+        await offlineStorage.saveCachedUser(data.usuario);
       }
       return data;
     } catch (err: any) {
-      console.warn('[DDPS API] Erro ao validar sessão:', err);
+      console.warn('[DDPS API] Erro ao validar sessão no servidor, verificando cache offline:', err);
+      const cachedUser = await offlineStorage.getCachedUser();
+      if (cachedUser) {
+        return { sucesso: true, usuario: cachedUser, offline: true };
+      }
       return { sucesso: false, mensagem: 'Erro de comunicação ao validar sessão.' };
     }
   },
@@ -1229,14 +1253,9 @@ export const api = {
           }
         ).filter(f => f.id && f.nome);
 
-      if (
-        mappedList.length > 0
-      ) {
-
-        LocalDDSStorage
-          .saveCachedFuncionarios(
-            mappedList
-          );
+      if (mappedList.length > 0) {
+        LocalDDSStorage.saveCachedFuncionarios(mappedList);
+        offlineStorage.saveFuncionarios(mappedList).catch(() => {});
       }
 
       const resultList = incluirInativos ? mappedList : mappedList.filter(f => f.ativo === true || f.ativo === 'SIM');
@@ -1254,9 +1273,10 @@ export const api = {
         err?.message || err
       );
 
-      const localList =
-        LocalDDSStorage
-          .getLocalFuncionarios();
+      let localList = await offlineStorage.getFuncionarios().catch(() => []);
+      if (!localList || localList.length === 0) {
+        localList = LocalDDSStorage.getLocalFuncionarios();
+      }
 
       const resultLocal = incluirInativos ? localList : localList.filter(f => f.ativo === true || f.ativo === 'SIM');
       funcionariosCache = {
@@ -1410,6 +1430,7 @@ export const api = {
         encarregadoId: item.encarregadoId || '',
         encarregadoNome: item.encarregadoNome || '',
         assinaturaEncarregado: item.assinaturaEncarregado || '',
+        syncStatus: 'synced',
         participantesQtd: typeof item.participantesQtd === 'number'
           ? item.participantesQtd
           : (Array.isArray(item.participantes)
@@ -1417,26 +1438,48 @@ export const api = {
             : (LocalDDSStorage.getParticipantes(String(item.idDDS || '')).length || 0))
       }));
 
-      return baseDDSList;
+      // Salva remotos no storage e funde com itens pendentes locais
+      for (const d of baseDDSList) {
+        await offlineStorage.saveDDS(d);
+      }
+      const localDDS = await offlineStorage.getAllDDS();
+      const map = new Map<string, DDS>();
+      for (const d of baseDDSList) map.set(d.idDDS, d);
+      for (const d of localDDS) {
+        if (d.syncStatus === 'pending' || d.idDDS.startsWith('DDS-OFFLINE-')) {
+          map.set(d.idDDS, d);
+        }
+      }
+
+      return Array.from(map.values());
     } catch (err) {
       console.error('[DDPS API] Erro ao listar DDS:', err);
+      try {
+        const local = await offlineStorage.getAllDDS();
+        if (local && local.length > 0) return local;
+      } catch (e) {
+        console.warn('Erro ao ler offlineStorage:', e);
+      }
       return LocalDDSStorage.getDDSList();
     }
   },
 
   // ==========================================================
-  // 3.2 SINCRONIZAR (CHAMADA AGREGADA OTIMIZADA)
+  // 3.2 SINCRONIZAR (CHAMADA AGREGADA OTIMIZADA COM MERGE OFFLINE)
   // ==========================================================
 
   async sincronizar(): Promise<{ dds: DDS[]; status: DDPSStatus | null }> {
     console.log('[DDPS API] Sincronizando dados com backend');
+    let remoteDDS: DDS[] = [];
+    let mappedStatus: DDPSStatus | null = null;
+
     try {
       const res = await fetchWithFallback('sincronizar');
       if (res.ok) {
         const text = await res.text();
         const data = JSON.parse(text);
         if (data && (data.sucesso || data.success) && Array.isArray(data.dds)) {
-          const mappedDDS: DDS[] = data.dds.map((item: any) => ({
+          remoteDDS = data.dds.map((item: any) => ({
             idDDS: String(item.idDDS || ''),
             semana: item.semanaId || '',
             diaSemana: item.diaSemana || '',
@@ -1451,6 +1494,7 @@ export const api = {
             encarregadoId: item.encarregadoId || '',
             encarregadoNome: item.encarregadoNome || '',
             assinaturaEncarregado: item.assinaturaEncarregado || '',
+            syncStatus: 'synced',
             participantesQtd: typeof item.participantesQtd === 'number'
               ? item.participantesQtd
               : (Array.isArray(item.participantes)
@@ -1458,7 +1502,6 @@ export const api = {
                 : (LocalDDSStorage.getParticipantes(String(item.idDDS || '')).length || 0))
           }));
 
-          let mappedStatus: DDPSStatus | null = null;
           if (data.status) {
             const fallback = getFallbackStatus();
             mappedStatus = {
@@ -1472,20 +1515,51 @@ export const api = {
               responsavelPadrao: data.status.responsavelPadrao ?? fallback.responsavelPadrao
             };
           }
-
-          return { dds: mappedDDS, status: mappedStatus };
         }
       }
     } catch (err) {
       console.warn('[DDPS API] Fallback de sincronização agregada:', err);
     }
 
-    // Fallback leve: listarDDS + getStatus (apenas 2 chamadas em paralelo sem N+1)
-    const [dds, status] = await Promise.all([
-      this.listarDDS(),
-      this.getStatus().catch(() => null)
-    ]);
-    return { dds, status };
+    if (remoteDDS.length === 0 && !mappedStatus) {
+      // Fallback leve: listarDDS + getStatus
+      const [dds, status] = await Promise.all([
+        this.listarDDS(),
+        this.getStatus().catch(() => null)
+      ]);
+      remoteDDS = dds.map(d => ({ ...d, syncStatus: d.syncStatus || 'synced' }));
+      mappedStatus = status;
+    }
+
+    // Grava itens remotos confirmados no offlineStorage
+    for (const d of remoteDDS) {
+      await offlineStorage.saveDDS(d);
+    }
+
+    // Carrega registros locais e funde com itens pendentes de sincronização
+    const localDDSList = await offlineStorage.getAllDDS();
+    const finalDDSMap = new Map<string, DDS>();
+
+    // 1. Adiciona os remotos confirmados
+    for (const d of remoteDDS) {
+      finalDDSMap.set(d.idDDS, d);
+    }
+
+    // 2. Preserva qualquer DDS local que esteja pendente de sincronização ou offline
+    for (const localD of localDDSList) {
+      if (localD.syncStatus === 'pending' || localD.idDDS.startsWith('DDS-OFFLINE-')) {
+        finalDDSMap.set(localD.idDDS, localD);
+      } else if (!finalDDSMap.has(localD.idDDS)) {
+        finalDDSMap.set(localD.idDDS, localD);
+      }
+    }
+
+    const mergedDDS = Array.from(finalDDSMap.values());
+    if (mappedStatus) {
+      await offlineStorage.saveCachedStatus(mappedStatus);
+    }
+
+    return { dds: mergedDDS, status: mappedStatus };
   },
 
 
@@ -1656,7 +1730,7 @@ export const api = {
   },
 
   // ==========================================================
-  // 5. CRIAR DDS
+  // 5. CRIAR DDS (OFFLINE-FIRST)
   // ==========================================================
 
   async criarDDS(
@@ -1673,132 +1747,144 @@ export const api = {
   ): Promise<{
     idDDS: string;
     success: boolean;
+    offline?: boolean;
   }> {
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
 
-    const status =
-      await this.getStatus();
+    // Se estiver sem conexão, gera DDS offline com ID único e salva localmente
+    if (!isOnline) {
+      const offlineId = `DDS-OFFLINE-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+      const status = await this.getStatus().catch(() => getFallbackStatus());
 
-    const res =
-      await postWithFallback({
-        acao:
-          'criarDDS',
-        action:
-          'criarDDS',
+      const novoDDS: DDS = {
+        idDDS: offlineId,
+        clientOfflineId: offlineId,
+        semana: status.semana,
+        diaSemana: status.diaSemana || 'Hoje',
+        diaSemanaNumero: status.diaSemanaNumero,
+        data: status.data || '',
+        horario: status.horario || '',
+        tema: payload.tema,
+        conteudo: payload.conteudo,
+        local: payload.local,
+        responsavel: payload.responsavel,
+        observacoes: payload.observacoes || '',
+        status: 'pendente',
+        syncStatus: 'pending',
+        participantesQtd: 0,
+        encarregadoId: payload.encarregadoId || '',
+        encarregadoNome: payload.encarregadoNome || '',
+        assinaturaEncarregado: payload.assinaturaEncarregado || ''
+      };
+
+      await offlineStorage.saveDDS(novoDDS);
+      LocalDDSStorage.saveDDS(novoDDS);
+
+      return {
+        idDDS: offlineId,
+        success: true
+      };
+    }
+
+    try {
+      const status = await this.getStatus();
+
+      const res = await postWithFallback({
+        acao: 'criarDDS',
+        action: 'criarDDS',
         ...payload
       });
 
-    if (!res.ok) {
-      const erro =
-        await res.text();
-      throw new Error(
-        `HTTP ${res.status}: ${erro}`
-      );
-    }
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
 
-    const text =
-      await res.text();
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(`Resposta inválida: ${text}`);
+      }
 
-    let data: any = {};
-    try {
-      data =
-        JSON.parse(text);
-    } catch {
-      throw new Error(
-        `Resposta inválida do servidor: ${text}`
-      );
-    }
+      if (data && (data.sucesso === false || data.success === false)) {
+        throw new Error(data.erro || data.mensagem || 'Erro ao criar DDS na planilha.');
+      }
 
-    if (
-      data &&
-      (
-        data.sucesso === false ||
-        data.success === false
-      )
-    ) {
-      throw new Error(
-        data.erro ||
-        data.mensagem ||
-        data.message ||
-        'Erro ao criar DDS na planilha.'
-      );
-    }
-
-    if (
-      data &&
-      (
-        data.mensagem === 'POST recebido com sucesso.' ||
-        data.message === 'POST recebido com sucesso.'
-      )
-    ) {
-      throw new Error(
-        'Ação criarDDS não foi processada pelo Google Apps Script (retornou rota padrão genérica).'
-      );
-    }
-
-    const idDDS =
-      String(
-        data.idDDS ||
-        data.id ||
-        data.data?.idDDS ||
-        data.dados?.idDDS ||
-        ''
+      const idDDS = String(
+        data.idDDS || data.id || data.data?.idDDS || data.dados?.idDDS || ''
       ).trim();
 
-    if (!idDDS || idDDS.startsWith('DDS-OFFLINE-')) {
-      throw new Error(
-        data.erro ||
-        data.mensagem ||
-        'O servidor não retornou um ID_DDS válido.'
-      );
+      if (!idDDS || idDDS.startsWith('DDS-OFFLINE-')) {
+        throw new Error('O servidor não retornou um ID_DDS válido.');
+      }
+
+      const novoDDS: DDS = {
+        idDDS,
+        semana: status.semana,
+        diaSemana: status.diaSemana,
+        diaSemanaNumero: status.diaSemanaNumero,
+        data: status.data,
+        horario: status.horario,
+        tema: payload.tema,
+        conteudo: payload.conteudo,
+        local: payload.local,
+        responsavel: payload.responsavel,
+        observacoes: payload.observacoes || '',
+        status: 'pendente',
+        syncStatus: 'synced',
+        participantesQtd: 0,
+        encarregadoId: payload.encarregadoId || '',
+        encarregadoNome: payload.encarregadoNome || '',
+        assinaturaEncarregado: payload.assinaturaEncarregado || ''
+      };
+
+      await offlineStorage.saveDDS(novoDDS);
+      LocalDDSStorage.saveDDS(novoDDS);
+
+      return {
+        idDDS,
+        success: true
+      };
+    } catch (err: any) {
+      console.warn('[DDPS API] Falha na rede ao criar DDS online. Alternando para modo offline:', err);
+      // Fallback transparente: cria localmente sem travar o usuário no campo
+      const offlineId = `DDS-OFFLINE-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+      const status = await this.getStatus().catch(() => getFallbackStatus());
+
+      const novoDDS: DDS = {
+        idDDS: offlineId,
+        clientOfflineId: offlineId,
+        semana: status.semana,
+        diaSemana: status.diaSemana || 'Hoje',
+        diaSemanaNumero: status.diaSemanaNumero,
+        data: status.data || '',
+        horario: status.horario || '',
+        tema: payload.tema,
+        conteudo: payload.conteudo,
+        local: payload.local,
+        responsavel: payload.responsavel,
+        observacoes: payload.observacoes || '',
+        status: 'pendente',
+        syncStatus: 'pending',
+        participantesQtd: 0,
+        encarregadoId: payload.encarregadoId || '',
+        encarregadoNome: payload.encarregadoNome || '',
+        assinaturaEncarregado: payload.assinaturaEncarregado || ''
+      };
+
+      await offlineStorage.saveDDS(novoDDS);
+      LocalDDSStorage.saveDDS(novoDDS);
+
+      return {
+        idDDS: offlineId,
+        success: true
+      };
     }
-
-    const novoDDS: DDS = {
-      idDDS,
-      semana:
-        status.semana,
-      diaSemana:
-        status.diaSemana,
-      diaSemanaNumero:
-        status.diaSemanaNumero,
-      data:
-        status.data,
-      horario:
-        status.horario,
-      tema:
-        payload.tema,
-      conteudo:
-        payload.conteudo,
-      local:
-        payload.local,
-      responsavel:
-        payload.responsavel,
-      observacoes:
-        payload.observacoes ||
-        '',
-      status:
-        'pendente',
-      participantesQtd:
-        0,
-      encarregadoId:
-        payload.encarregadoId || '',
-      encarregadoNome:
-        payload.encarregadoNome || '',
-      assinaturaEncarregado:
-        payload.assinaturaEncarregado || ''
-    };
-
-    LocalDDSStorage
-      .saveDDS(novoDDS);
-
-    return {
-      idDDS,
-      success:
-        true
-    };
   },
 
   // ==========================================================
-  // 5.5 SALVAR DDS COMPLETO (FLUXO CONSOLIDADO EM LOTE - 1 HTTP REQUEST)
+  // 5.5 SALVAR DDS COMPLETO (OFFLINE-FIRST COM RESILIÊNCIA TOTAL)
   // ==========================================================
 
   async salvarDDSCompleto(dados: {
@@ -1818,57 +1904,185 @@ export const api = {
       assinatura?: string;
     }>;
     finalizar?: boolean;
+    syncOperationId?: string;
   }): Promise<{
     sucesso: boolean;
     idDDS?: string;
     dds?: any;
     message?: string;
+    offline?: boolean;
   }> {
-    const tInicio = performance.now();
-    console.log('[DDPS PERF LOG] INÍCIO API salvarDDSCompleto', dados.idDDS || 'NOVO DDS');
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    const currentId = String(dados.idDDS || '').trim();
 
-    if (dados.idDDS && dados.participantes) {
-      LocalDDSStorage.saveParticipantes(dados.idDDS, dados.participantes as any);
+    // 1. Grava participantes imediatamente em todas as camadas de armazenamento local
+    if (currentId && dados.participantes) {
+      await offlineStorage.saveParticipantes(currentId, dados.participantes as any);
+      LocalDDSStorage.saveParticipantes(currentId, dados.participantes as any);
     }
 
-    try {
-      const res = await postWithFallback({
-        acao: 'salvarDDSCompleto',
-        action: 'salvarDDSCompleto',
-        ...dados
+    // 2. Atualiza estado do DDS localmente
+    if (currentId) {
+      const existingDDS = (await offlineStorage.getDDS(currentId)) || LocalDDSStorage.getDDSList().find(d => d.idDDS === currentId);
+      if (existingDDS) {
+        existingDDS.status = dados.finalizar ? 'finalizado' : existingDDS.status || 'pendente';
+        existingDDS.participantesQtd = dados.participantes?.length || existingDDS.participantesQtd || 0;
+        if (dados.assinaturaEncarregado) existingDDS.assinaturaEncarregado = dados.assinaturaEncarregado;
+        if (dados.encarregadoId) existingDDS.encarregadoId = dados.encarregadoId;
+        if (dados.encarregadoNome) existingDDS.encarregadoNome = dados.encarregadoNome;
+        
+        // Se estiver offline, marca como pendente de sincronização
+        if (!isOnline) {
+          existingDDS.syncStatus = 'pending';
+        }
+        await offlineStorage.saveDDS(existingDDS);
+        LocalDDSStorage.saveDDS(existingDDS);
+      }
+    }
+
+    // 3. Se estiver offline, enfileira na fila de sincronização e retorna sucesso local
+    if (!isOnline) {
+      console.log('[DDPS API] Salvamento offline: enfileirando operação de sincronização para:', currentId);
+      await offlineStorage.enqueueOperation({
+        tipo: 'SALVAR_DDS_COMPLETO',
+        idDDS: currentId,
+        payload: dados
       });
 
-      const text = await res.text();
-      const tFim = performance.now();
-      console.log(`[DDPS PERF LOG] RESPONSE salvarDDSCompleto RECEBIDA em ${(tFim - tInicio).toFixed(0)} ms`);
+      return {
+        sucesso: true,
+        idDDS: currentId,
+        offline: true,
+        message: 'DDPS finalizado e salvo no dispositivo. Será sincronizado automaticamente quando houver conexão.'
+      };
+    }
 
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${text}`);
+    // 4. Se estiver online, tenta enviar imediatamente para o backend
+    try {
+      const resRemoto = await this.salvarDDSCompletoRemoto(dados);
+
+      if (resRemoto.sucesso) {
+        // Marca como sincronizado localmente
+        const confirmedId = resRemoto.idDDS || currentId;
+        const dds = await offlineStorage.getDDS(confirmedId);
+        if (dds) {
+          dds.syncStatus = 'synced';
+          await offlineStorage.saveDDS(dds);
+          LocalDDSStorage.saveDDS(dds);
+        }
+        return resRemoto;
+      } else {
+        throw new Error(resRemoto.message || 'Falha retornada pelo servidor.');
       }
+    } catch (err: any) {
+      console.warn('[DDPS API] Falha de comunicação ao salvar online. Enfileirando com segurança:', err.message);
+      
+      // Enfileira para garantia e marca como pendente
+      await offlineStorage.enqueueOperation({
+        tipo: 'SALVAR_DDS_COMPLETO',
+        idDDS: currentId,
+        payload: dados
+      });
 
-      let data: any = {};
-      try {
-        data = JSON.parse(text);
-      } catch {
-        throw new Error(`Resposta não JSON recebida do servidor: ${text}`);
-      }
-
-      if (data && (data.sucesso === false || data.success === false)) {
-        throw new Error(
-          data.erro || data.message || data.mensagem || 'O Apps Script informou falha ao salvar DDS Completo.'
-        );
+      const dds = await offlineStorage.getDDS(currentId);
+      if (dds) {
+        dds.syncStatus = 'pending';
+        await offlineStorage.saveDDS(dds);
+        LocalDDSStorage.saveDDS(dds);
       }
 
       return {
         sucesso: true,
-        idDDS: data.idDDS || dados.idDDS,
-        dds: data.dds,
-        message: data.mensagem || data.message || 'DDS salvo com sucesso.'
+        idDDS: currentId,
+        offline: true,
+        message: 'DDPS salvo no dispositivo. Sincronização pendente aguardando reconexão estável.'
       };
-    } catch (err: any) {
-      console.error('[DDPS API] Erro em salvarDDSCompleto:', err);
-      throw err;
     }
+  },
+
+  // Chamada remota pura para o backend (usada pelo SyncManager e chamadas diretas online)
+  async salvarDDSCompletoRemoto(dados: any): Promise<{
+    sucesso: boolean;
+    idDDS?: string;
+    clientOfflineId?: string;
+    dds?: any;
+    message?: string;
+  }> {
+    const res = await postWithFallback({
+      acao: 'salvarDDSCompleto',
+      action: 'salvarDDSCompleto',
+      ...dados
+    });
+
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${text}`);
+    }
+
+    let data: any = {};
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`Resposta inválida do servidor: ${text}`);
+    }
+
+    if (data && (data.sucesso === false || data.success === false)) {
+      throw new Error(
+        data.erro || data.message || data.mensagem || 'Falha ao processar salvamento no Google Apps Script.'
+      );
+    }
+
+    return {
+      sucesso: true,
+      idDDS: data.idDDS || dados.idDDS,
+      clientOfflineId: data.clientOfflineId || dados.clientOfflineId,
+      dds: data.dds,
+      message: data.mensagem || data.message || 'DDS salvo com sucesso.'
+    };
+  },
+
+  async salvarParticipantesRemoto(idDDS: string, participantes: Participante[], syncOperationId?: string): Promise<{ success: boolean; message?: string }> {
+    const payloadParticipantes = participantes.map((p) => ({
+      idFuncionario: p.idFuncionario,
+      nome: p.nome,
+      emociograma: p.ausente ? '' : normalizeEmociogramaToText(p.emociograma),
+      assinatura: p.ausente ? '' : (p.assinatura || ''),
+      ausente: p.ausente ? 'SIM' : 'NAO',
+      motivoAusencia: p.ausente ? (sanitizeMotivoAusencia(p.motivoAusencia) || 'Atestado') : ''
+    }));
+
+    const res = await postWithFallback({
+      acao: 'salvarParticipantes',
+      action: 'salvarParticipantes',
+      idDDS,
+      participantes: payloadParticipantes,
+      syncOperationId
+    });
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    const data = JSON.parse(text);
+    if (data && (data.success === false || data.sucesso === false)) {
+      throw new Error(data.erro || data.mensagem || 'Falha ao registrar participantes.');
+    }
+    return { success: true, message: data.message || 'Participantes registrados com sucesso.' };
+  },
+
+  async finalizarDDSRemoto(idDDS: string, syncOperationId?: string): Promise<{ success: boolean; message?: string }> {
+    const res = await postWithFallback({
+      acao: 'finalizarDDS',
+      action: 'finalizarDDS',
+      idDDS,
+      syncOperationId
+    });
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    const data = JSON.parse(text);
+    if (data && (data.success === false || data.sucesso === false)) {
+      throw new Error(data.erro || data.mensagem || 'Falha ao finalizar DDS no servidor.');
+    }
+    return { success: true, message: data.message || 'DDS finalizado com sucesso.' };
   },
 
   // ==========================================================
@@ -1882,12 +2096,17 @@ export const api = {
     success: boolean;
     message?: string;
   }> {
+    // 1. Grava imediatamente nas camadas de armazenamento local
+    await offlineStorage.saveParticipantes(idDDS, participantes);
+    LocalDDSStorage.saveParticipantes(idDDS, participantes);
 
-    LocalDDSStorage
-      .saveParticipantes(
-        idDDS,
-        participantes
-      );
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    if (!isOnline) {
+      return {
+        success: true,
+        message: 'Participantes salvos com sucesso no dispositivo (modo offline).'
+      };
+    }
 
     const payloadParticipantes =
       participantes.map(
@@ -1910,7 +2129,6 @@ export const api = {
       );
 
     try {
-
       const res =
         await postWithFallback({
           acao:
@@ -1956,18 +2174,6 @@ export const api = {
         );
       }
 
-      if (
-        data &&
-        (
-          data.mensagem === 'POST recebido com sucesso.' ||
-          data.message === 'POST recebido com sucesso.'
-        )
-      ) {
-        throw new Error(
-          'Ação salvarParticipantes não foi reconhecida pelo Google Apps Script.'
-        );
-      }
-
       return {
         success:
           true,
@@ -1978,18 +2184,17 @@ export const api = {
       };
 
     } catch (err: any) {
-
-      console.error(
-        '[DDPS API] Erro ao salvar participantes:',
+      console.warn(
+        '[DDPS API] Aviso ao salvar participantes online, mantendo salvamento local offline:',
         err
       );
 
+      // Como já está salvo localmente, permite avançar no campo com segurança
       return {
         success:
-          false,
+          true,
         message:
-          err?.message ||
-          'Falha ao salvar participantes no servidor.'
+          'Participantes gravados localmente no dispositivo (sincronização ocorrerá na finalização).'
       };
     }
   },

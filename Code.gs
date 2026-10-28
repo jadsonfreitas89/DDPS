@@ -419,6 +419,135 @@ function doGet(e) {
 
 
 /* ============================================================
+ * IDEMPOTÊNCIA E CONCORRÊNCIA (PROPERTIES SERVICE + LOCK SERVICE)
+ * ============================================================ */
+
+function buscarDDSExistentePorIdOffline(clientOfflineId, syncOperationId, dados) {
+  try {
+    var refTarget1 = clientOfflineId ? '[REF:' + clientOfflineId + ']' : '';
+    var refTarget2 = syncOperationId ? '[REF:' + syncOperationId + ']' : '';
+    
+    if (!refTarget1 && !refTarget2) return null;
+
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName(DDPS_ABAS.DDS);
+    if (!sheet || sheet.getLastRow() < 2) return null;
+
+    var lastRow = sheet.getLastRow();
+    var startRow = Math.max(2, lastRow - 200);
+    var numRows = lastRow - startRow + 1;
+    var values = sheet.getRange(startRow, 1, numRows, 11).getValues();
+
+    for (var i = values.length - 1; i >= 0; i--) {
+      var rowObs = String(values[i][9] || '');
+      if ((refTarget1 && rowObs.indexOf(refTarget1) !== -1) || (refTarget2 && rowObs.indexOf(refTarget2) !== -1)) {
+        var idDDSStr = String(values[i][0]).trim();
+        var statusStr = String(values[i][10] || '').trim();
+        return {
+          idDDS: idDDSStr,
+          semanaId: String(values[i][1] || '').trim(),
+          tema: String(values[i][5] || '').trim(),
+          local: String(values[i][7] || '').trim(),
+          responsavel: String(values[i][8] || '').trim(),
+          observacoes: rowObs,
+          status: statusStr
+        };
+      }
+    }
+  } catch (errSearch) {
+    Logger.log('[IDEMPOTÊNCIA] Erro ao buscar DDS por id offline: ' + errSearch.message);
+  }
+  return null;
+}
+
+function executarComIdempotenciaELock(syncOperationId, actionName, payload, callback) {
+  syncOperationId = String(syncOperationId || (payload ? (payload.syncOperationId || payload.clientOfflineId) : '') || '').trim();
+
+  // Operação normal online sem syncOperationId
+  if (!syncOperationId) {
+    return callback();
+  }
+
+  var lock = LockService.getScriptLock();
+  var lockAdquirido = false;
+
+  try {
+    lockAdquirido = lock.tryLock(30000);
+    if (!lockAdquirido) {
+      throw new Error('Não foi possível adquirir a trava de concorrência (timeout). Tente novamente.');
+    }
+
+    var props = PropertiesService.getScriptProperties();
+    var key = 'SYNC_OP_' + syncOperationId;
+
+    // 1. Checagem em PropertiesService
+    try {
+      var cachedStr = props.getProperty(key);
+      if (cachedStr) {
+        var cachedObj = JSON.parse(cachedStr);
+        if (cachedObj && (cachedObj.sucesso !== false && cachedObj.success !== false)) {
+          Logger.log('[IDEMPOTÊNCIA] Cache PropertiesService encontrado para: ' + syncOperationId);
+          return cachedObj;
+        }
+      }
+    } catch (errReadProp) {
+      Logger.log('[IDEMPOTÊNCIA] Aviso de leitura do PropertiesService: ' + errReadProp.message);
+    }
+
+    // 2. Recuperação da Janela Crítica (Post-appendRow, Pre-setProperty failure)
+    var clientOfflineId = String(payload ? (payload.clientOfflineId || payload.idDDS || '') : '').trim();
+    var ddsExistente = buscarDDSExistentePorIdOffline(clientOfflineId, syncOperationId, payload);
+    if (ddsExistente) {
+      Logger.log('[IDEMPOTÊNCIA] DDS recuperado da planilha via ref id: ' + ddsExistente.idDDS);
+      var resRecuperado = {
+        sucesso: true,
+        idDDS: ddsExistente.idDDS,
+        clientOfflineId: clientOfflineId || syncOperationId,
+        dds: ddsExistente,
+        recuperadoJanelaCritica: true
+      };
+      try {
+        props.setProperty(key, JSON.stringify(resRecuperado));
+      } catch (eResave) {}
+      return resRecuperado;
+    }
+
+    // 3. Execução da Operação
+    var resultado = callback();
+
+    // 4. Armazenamento do resultado em PropertiesService
+    if (resultado && (resultado.sucesso !== false && resultado.success !== false)) {
+      try {
+        var toSave = JSON.stringify(resultado);
+        if (toSave.length < 8500) {
+          props.setProperty(key, toSave);
+        } else {
+          var resCompacto = {
+            sucesso: true,
+            idDDS: resultado.idDDS,
+            clientOfflineId: resultado.clientOfflineId || clientOfflineId || syncOperationId,
+            status: resultado.status || (resultado.dds ? resultado.dds.status : 'CONCLUIDO')
+          };
+          props.setProperty(key, JSON.stringify(resCompacto));
+        }
+      } catch (errSaveProp) {
+        Logger.log('[IDEMPOTÊNCIA] Aviso ao salvar no PropertiesService: ' + errSaveProp.message);
+      }
+    }
+
+    return resultado;
+
+  } finally {
+    if (lockAdquirido) {
+      try {
+        lock.releaseLock();
+      } catch (eRel) {}
+    }
+  }
+}
+
+
+/* ============================================================
  * WEB APP — POST
  * ============================================================ */
 
@@ -514,13 +643,23 @@ function doPost(e) {
       case 'criarDDS':
       case 'criarDds':
         exigirAutenticacao(token);
-        return respostaJSON(criarDDS(dados));
+        return respostaJSON(executarComIdempotenciaELock(
+          dados.syncOperationId || dados.clientOfflineId,
+          'criarDDS',
+          dados,
+          function() { return criarDDS(dados); }
+        ));
 
       case 'atualizarDDS':
       case 'atualizarDds':
       case 'editarDDS':
         exigirAutenticacao(token);
-        return respostaJSON(atualizarDDS(dados));
+        return respostaJSON(executarComIdempotenciaELock(
+          dados.syncOperationId || dados.clientOfflineId,
+          'atualizarDDS',
+          dados,
+          function() { return atualizarDDS(dados); }
+        ));
 
       case 'registrarAssinaturaEncarregado':
         exigirAutenticacao(token);
@@ -529,7 +668,12 @@ function doPost(e) {
       case 'salvarDDSCompleto':
       case 'salvarEtapaDDS':
         exigirAutenticacao(token);
-        return respostaJSON(salvarDDSCompleto(dados));
+        return respostaJSON(executarComIdempotenciaELock(
+          dados.syncOperationId || dados.clientOfflineId,
+          'salvarDDSCompleto',
+          dados,
+          function() { return salvarDDSCompleto(dados); }
+        ));
 
       case 'salvarParticipantes':
         exigirAutenticacao(token);
@@ -1507,6 +1651,11 @@ function criarDDS(dados) {
     String(
       dados.observacoes || ''
     ).trim();
+
+  var clientRef = String(dados.clientOfflineId || dados.syncOperationId || '').trim();
+  if (clientRef && observacoes.indexOf('[REF:') === -1) {
+    observacoes = (observacoes ? observacoes + ' ' : '') + '[REF:' + clientRef + ']';
+  }
 
   if (!tema) {
 

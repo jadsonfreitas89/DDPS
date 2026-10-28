@@ -29,6 +29,8 @@ import {
   getApiBaseUrl,
   LocalDDSStorage
 } from './services/api';
+import { syncManager } from './services/syncManager';
+import { offlineStorage } from './services/offlineStorage';
 
 import { Header } from './components/Header';
 import { LoadingSpinner } from './components/LoadingSpinner';
@@ -449,6 +451,26 @@ export default function App() {
     verificarAutenticacao();
   }, [loadInitialData]);
 
+  // Atualização automática de estado quando o syncManager conclui operações em background
+  useEffect(() => {
+    const unsubscribe = syncManager.subscribe(async (syncState) => {
+      if (!syncState.isSyncing && syncState.pendingCount === 0 && syncState.lastSyncTime) {
+        try {
+          const list = await offlineStorage.getAllDDS();
+          if (list && list.length > 0) {
+            setAllDDS(list);
+            const currentSemanaId = getSemanaId(new Date());
+            setDdsSemana(list.filter((d) => pertenceASemana(d, currentSemanaId)));
+          }
+        } catch (e) {
+          console.warn('[DDPS] Erro ao atualizar lista após sincronização automática:', e);
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
   // ==========================================================
   // TOAST
   // ==========================================================
@@ -584,10 +606,18 @@ export default function App() {
             formData
           );
 
+        const isOffline = Boolean(result.offline || String(result.idDDS).startsWith('DDS-OFFLINE-'));
+
         const novoDDS: DDS = {
 
           idDDS:
             result.idDDS,
+
+          clientOfflineId:
+            isOffline ? result.idDDS : undefined,
+
+          syncStatus:
+            isOffline ? 'pending' : 'synced',
 
           semana:
             status?.semana,
@@ -645,8 +675,10 @@ export default function App() {
         setParticipantesMap({});
 
         showToast(
-          'DDS registrado com sucesso! Coletando participantes.',
-          'success'
+          isOffline
+            ? 'DDS criado offline (salvo no dispositivo). Coletando participantes.'
+            : 'DDS registrado com sucesso! Coletando participantes.',
+          isOffline ? 'info' : 'success'
         );
 
         setCurrentScreen(
@@ -862,11 +894,23 @@ export default function App() {
         );
       }
 
+      const isOfflineOp = Boolean((resultado as any).offline || currentIdDDS.startsWith('DDS-OFFLINE-'));
+
       // Atualiza a lista localmente sem necessidade de re-query HTTP completa
+      const updatedStatus: DDS['status'] = 'finalizado';
+      const updatedSyncStatus = isOfflineOp ? 'pending' : 'synced';
+
       setDdsSemana((prev) =>
         prev.map((d) =>
           d.idDDS === currentIdDDS
-            ? { ...d, status: 'FINALIZADO', participantesQtd: participantesFinal.length }
+            ? { ...d, status: updatedStatus, syncStatus: updatedSyncStatus, participantesQtd: participantesFinal.length }
+            : d
+        )
+      );
+      setAllDDS((prev) =>
+        prev.map((d) =>
+          d.idDDS === currentIdDDS
+            ? { ...d, status: updatedStatus, syncStatus: updatedSyncStatus, participantesQtd: participantesFinal.length }
             : d
         )
       );
@@ -880,10 +924,17 @@ export default function App() {
       setActiveDDS(null);
       setParticipantesMap({});
 
-      showToast(
-        'DDS Finalizado e registrado na planilha com sucesso!',
-        'success'
-      );
+      if (isOfflineOp) {
+        showToast(
+          'DDS finalizado e salvo localmente no dispositivo! Será sincronizado quando houver conexão.',
+          'info'
+        );
+      } else {
+        showToast(
+          'DDS Finalizado e registrado na planilha com sucesso!',
+          'success'
+        );
+      }
 
       // Navega para a tela inicial somente após todas as operações terminarem com sucesso
       setCurrentScreen('inicio');
@@ -939,7 +990,10 @@ export default function App() {
     setIsSyncing(true);
 
     try {
-      // Chamada HTTP agregada otimizada (com fallback inteligente)
+      // 1. Processa operações pendentes da fila offline
+      await syncManager.syncNow();
+
+      // 2. Chamada HTTP agregada otimizada com merge offline
       const syncResult = await api.sincronizar();
 
       if (syncResult.dds) {

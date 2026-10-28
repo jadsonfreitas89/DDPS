@@ -51,6 +51,35 @@ export interface DDS {
   encarregadoId?: string;
   encarregadoNome?: string;
   assinaturaEncarregado?: string; // Base64 data URL
+  syncStatus?: 'synced' | 'pending' | 'syncing' | 'error';
+  clientOfflineId?: string;
+  clientSyncId?: string;
+  updatedAt?: number;
+}
+
+export type SyncOperationType = 
+  | 'CRIAR_DDS'
+  | 'SALVAR_PARTICIPANTES'
+  | 'FINALIZAR_DDS'
+  | 'SALVAR_DDS_COMPLETO';
+
+export interface SyncQueueItem {
+  id: string; // UUID único da operação
+  tipo: SyncOperationType;
+  idDDS: string; // ID local ou remoto
+  payload: any;
+  timestamp: number;
+  tentativas: number;
+  status: 'pendente' | 'sincronizando' | 'erro' | 'concluido';
+  ultimoErro?: string;
+}
+
+export interface SyncState {
+  isOnline: boolean;
+  isSyncing: boolean;
+  pendingCount: number;
+  lastSyncTime: number | null;
+  lastSyncError: string | null;
 }
 
 export interface DiaSemanaProgramacao {

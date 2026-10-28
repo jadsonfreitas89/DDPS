@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { Plus, CheckCircle2, RefreshCw, FileDown, Calendar, FileText } from 'lucide-react';
+import { Plus, CheckCircle2, RefreshCw, FileDown, Calendar, FileText, WifiOff, CloudUpload, AlertTriangle } from 'lucide-react';
 import { DDPSStatus, DDS } from '../types';
 import { Button } from '../components/Button';
 import { DDSWeekCard } from '../components/DDSWeekCard';
 import { gerarPDFSemanalDDPS } from '../utils/pdfGenerator';
 import { getIntervaloSemanaTexto, getSemanaNumero } from '../utils/weekUtils';
+import { useSyncState } from '../hooks/useSyncState';
 
 interface HomeViewProps {
   status: DDPSStatus | null;
@@ -58,6 +59,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onContinuarDDS,
   onDescartarRascunho
 }) => {
+  const { syncState, syncNow } = useSyncState();
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   const hoje = new Date();
@@ -142,6 +144,55 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
   return (
     <div className="w-full flex flex-col gap-6 pb-8 animate-fadeIn">
+      {/* BANNER INFORMATIVO DE STATUS DE SINCRONIZAÇÃO E MODO OFFLINE */}
+      {!syncState.isOnline ? (
+        <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-950">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-amber-500/20 text-amber-700 rounded-xl shrink-0">
+              <WifiOff className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-amber-950 uppercase tracking-wide">Modo Campo • Sem Conexão</p>
+              <p className="text-xs text-amber-900 mt-0.5 leading-relaxed">
+                Você pode registrar novos DDPS e coletar assinaturas normalmente. Os dados estão salvos com segurança no seu dispositivo e serão sincronizados automaticamente assim que a conexão retornar.
+              </p>
+            </div>
+          </div>
+          {syncState.pendingCount > 0 && (
+            <span className="shrink-0 px-3 py-1 bg-amber-400 text-black text-xs font-black rounded-xl self-start sm:self-center">
+              {syncState.pendingCount} pendente{syncState.pendingCount > 1 ? 's' : ''} de sincronização
+            </span>
+          )}
+        </div>
+      ) : syncState.pendingCount > 0 ? (
+        <div className="p-4 bg-yellow-400/15 border border-yellow-400/40 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-yellow-950">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-yellow-400/30 text-yellow-800 rounded-xl shrink-0">
+              <CloudUpload className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-yellow-950 uppercase tracking-wide">
+                {syncState.pendingCount} registro{syncState.pendingCount > 1 ? 's' : ''} aguardando envio para a planilha
+              </p>
+              <p className="text-xs text-yellow-900 mt-0.5 leading-relaxed">
+                Os diálogos foram gravados localmente no dispositivo e estão prontos para envio ao Google Sheets.
+              </p>
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            onClick={() => syncNow()}
+            disabled={syncState.isSyncing}
+            className="bg-yellow-400 hover:bg-yellow-500 text-black font-black text-xs uppercase tracking-wider py-2.5 px-4 shadow-sm shrink-0 flex items-center justify-center gap-2 self-start sm:self-center"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${syncState.isSyncing ? 'animate-spin' : ''}`} />
+            <span>{syncState.isSyncing ? 'Sincronizando...' : 'Sincronizar agora'}</span>
+          </Button>
+        </div>
+      ) : null}
+
       {/* Grid Principal: Coluna Esquerda (Status/Ações) + Coluna Direita (Programação da Semana) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Coluna Esquerda (4 colunas em telas grandes) */}

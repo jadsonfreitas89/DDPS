@@ -3,6 +3,7 @@ import { Calendar, Clock, Settings, HardHat, Users, LogOut, Shield, KeyRound, Ch
 import { DDPSStatus, Usuario } from '../types';
 import { formatarHoraApenas, formatarDataApenas } from '../utils/dateFormatter';
 import { PWAInstallButton } from './PWAInstallButton';
+import { SyncStatusBadge } from './SyncStatusBadge';
 
 interface HeaderProps {
   status?: DDPSStatus | null;
@@ -75,6 +76,9 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* ÁREA CENTRAL / STATUS / OPÇÕES */}
         <div className="flex items-center gap-2">
+          {/* INDICADOR DE SINCRONIZAÇÃO E CONECTIVIDADE */}
+          <SyncStatusBadge compact />
+
           {status && (
             <>
               {/* MOBILE BADGE: APENAS "SEMANA XX" */}
@@ -275,6 +279,12 @@ export const Header: React.FC<HeaderProps> = ({
                     </span>
                   </div>
                 )}
+
+                {/* STATUS DE SINCRONIZAÇÃO MOBILE */}
+                <div className="px-3 py-2 mb-2 rounded-xl bg-gray-900/60 border border-gray-800 flex items-center justify-between">
+                  <span className="text-[11px] text-gray-400 font-semibold">Status de Rede:</span>
+                  <SyncStatusBadge />
+                </div>
 
                 {/* OPÇÃO 1: INÍCIO */}
                 {onNavigate && (

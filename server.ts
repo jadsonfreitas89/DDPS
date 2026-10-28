@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
+import fs from 'fs';
 import 'dotenv/config';
 import { createServer as createViteServer } from 'vite';
 
@@ -34,6 +35,42 @@ function normalizeEmociogramaToText(val: any): string {
 // In-memory cache para colaboradores (30 segundos)
 let cachedFuncionarios: { data: any; timestamp: number } | null = null;
 const CACHE_TTL_MS = 30_000;
+
+// Idempotência para operações de sincronização do aplicativo DDPS (Durável em disco)
+const IDEMPOTENCY_FILE = path.resolve(process.cwd(), '.idempotency_store.json');
+let idempotencyStore = new Map<string, { response: any; timestamp: number }>();
+
+try {
+  if (fs.existsSync(IDEMPOTENCY_FILE)) {
+    const raw = fs.readFileSync(IDEMPOTENCY_FILE, 'utf-8');
+    const data = JSON.parse(raw);
+    if (Array.isArray(data)) {
+      for (const item of data) {
+        if (item && item.key && item.value) {
+          idempotencyStore.set(item.key, item.value);
+        }
+      }
+    }
+    console.log(`[Backend Proxy] Carregadas ${idempotencyStore.size} operações idempotentes do armazenamento durável.`);
+  }
+} catch (err) {
+  console.warn('[Backend Proxy] Aviso ao carregar arquivo de idempotência:', err);
+}
+
+function saveIdempotencyStore() {
+  try {
+    const arr = [];
+    for (const [key, value] of idempotencyStore.entries()) {
+      arr.push({ key, value });
+    }
+    fs.writeFileSync(IDEMPOTENCY_FILE, JSON.stringify(arr, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('[Backend Proxy] Aviso ao salvar arquivo de idempotência:', err);
+  }
+}
+
+// Controle de concorrência para requisições simultâneas com o mesmo syncOperationId
+const activeSyncOperations = new Map<string, Promise<any>>();
 
 async function startServer() {
   const app = express();
@@ -208,54 +245,123 @@ async function startServer() {
       if (!bodyData.acao && bodyData.action) bodyData.acao = bodyData.action;
       if (!bodyData.action && bodyData.acao) bodyData.action = bodyData.acao;
 
-      // Normaliza emociograma se houver participantes
-      if (bodyData.participantes && Array.isArray(bodyData.participantes)) {
-        bodyData.participantes = bodyData.participantes.map((p: any) => ({
-          ...p,
-          emociograma: normalizeEmociogramaToText(p.emociograma)
-        }));
-      } else if (bodyData.emociograma) {
-        bodyData.emociograma = normalizeEmociogramaToText(bodyData.emociograma);
+      // 6.1 Idempotência para operações de sincronização repetidas
+      const syncOperationId = String(
+        req.headers['x-sync-operation-id'] || bodyData.syncOperationId || ''
+      ).trim();
+
+      if (syncOperationId && idempotencyStore.has(syncOperationId)) {
+        const cached = idempotencyStore.get(syncOperationId)!;
+        console.log(`[Backend Proxy] Retornando resposta idempotente salva para operação: ${syncOperationId}`);
+        return res.json(cached.response);
       }
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 20000);
-
-      const response = await fetch(targetUrl, {
-        method: 'POST',
-        redirect: 'follow',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8'
-        },
-        body: JSON.stringify(bodyData),
-        signal: controller.signal
-      });
-      
-      let finalResponse = response;
-      if (response.status === 302 || response.status === 301) {
-        const location = response.headers.get('location');
-        if (location) {
-          finalResponse = await fetch(location, {
-            method: 'GET',
-            signal: controller.signal
-          });
+      // Concorrência simultânea: se já há uma execução em andamento para este syncOperationId, aguarda ela
+      if (syncOperationId && activeSyncOperations.has(syncOperationId)) {
+        console.log(`[Backend Proxy] Requisição simultânea detectada para ${syncOperationId}. Aguardando execução em curso...`);
+        try {
+          const result = await activeSyncOperations.get(syncOperationId)!;
+          return res.json(result);
+        } catch (err: any) {
+          return res.status(502).json({ sucesso: false, erro: err.message || 'Erro na operação concorrente' });
         }
       }
-      clearTimeout(timeout);
 
-      const text = await finalResponse.text();
-      let parsed: any;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        console.warn('[Backend Proxy] Resposta do Apps Script não é JSON:', text.substring(0, 300));
-        return res.status(502).json({
-          sucesso: false,
-          erro: 'Resposta não formatada do Apps Script: ' + text.substring(0, 100)
+      const executeOperation = async () => {
+        // 6.2 Normalização de ID Offline
+        let originalOfflineId: string | null = null;
+        if (bodyData.idDDS && typeof bodyData.idDDS === 'string' && bodyData.idDDS.startsWith('DDS-OFFLINE-')) {
+          originalOfflineId = bodyData.idDDS;
+          bodyData.clientOfflineId = originalOfflineId;
+          delete bodyData.idDDS;
+        }
+
+        // Normaliza emociograma se houver participantes
+        if (bodyData.participantes && Array.isArray(bodyData.participantes)) {
+          bodyData.participantes = bodyData.participantes.map((p: any) => ({
+            ...p,
+            emociograma: normalizeEmociogramaToText(p.emociograma)
+          }));
+        } else if (bodyData.emociograma) {
+          bodyData.emociograma = normalizeEmociogramaToText(bodyData.emociograma);
+        }
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 20000);
+
+        const response = await fetch(targetUrl, {
+          method: 'POST',
+          redirect: 'follow',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8'
+          },
+          body: JSON.stringify(bodyData),
+          signal: controller.signal
         });
+        
+        let finalResponse = response;
+        if (response.status === 302 || response.status === 301) {
+          const location = response.headers.get('location');
+          if (location) {
+            finalResponse = await fetch(location, {
+              method: 'GET',
+              signal: controller.signal
+            });
+          }
+        }
+        clearTimeout(timeout);
+
+        const text = await finalResponse.text();
+        let parsed: any;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          throw new Error('Resposta não formatada do Apps Script: ' + text.substring(0, 100));
+        }
+
+        if (originalOfflineId && parsed) {
+          parsed.clientOfflineId = originalOfflineId;
+        }
+
+        // Salva no cache de idempotência operações com sucesso e persiste em disco
+        if (syncOperationId && parsed && (parsed.sucesso !== false && parsed.success !== false)) {
+          idempotencyStore.set(syncOperationId, {
+            response: parsed,
+            timestamp: Date.now()
+          });
+          
+          if (idempotencyStore.size > 200) {
+            const cutOff = Date.now() - 24 * 60 * 60 * 1000;
+            for (const [key, item] of idempotencyStore.entries()) {
+              if (item.timestamp < cutOff) idempotencyStore.delete(key);
+            }
+          }
+          saveIdempotencyStore();
+        }
+
+        return parsed;
+      };
+
+      if (syncOperationId) {
+        const operationPromise = executeOperation();
+        activeSyncOperations.set(syncOperationId, operationPromise);
+        try {
+          const result = await operationPromise;
+          activeSyncOperations.delete(syncOperationId);
+          return res.json(result);
+        } catch (err: any) {
+          activeSyncOperations.delete(syncOperationId);
+          console.error('[Backend Proxy] Erro na operação sincronizada:', err.message);
+          return res.status(502).json({
+            sucesso: false,
+            erro: err.message || 'Erro no proxy de comunicação com o Google Apps Script'
+          });
+        }
+      } else {
+        const result = await executeOperation();
+        return res.json(result);
       }
 
-      return res.json(parsed);
     } catch (err: any) {
       console.error('[Backend Proxy] Erro no /api/ddps:', err.message);
       return res.status(502).json({
@@ -272,6 +378,17 @@ async function startServer() {
       appType: 'spa'
     });
     app.use(vite.middlewares);
+    app.use('*', async (req: Request, res: Response, next) => {
+      const url = req.originalUrl;
+      try {
+        let template = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf-8');
+        template = await vite.transformIndexHtml(url, template);
+        res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
+      } catch (e: any) {
+        vite.ssrFixStacktrace(e);
+        next(e);
+      }
+    });
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
