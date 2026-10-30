@@ -17,10 +17,12 @@ import {
   Building,
   Target,
   Sparkles,
-  Printer
+  Printer,
+  FileText
 } from 'lucide-react';
 import { DDS, DDPSStatus, Usuario } from '../types';
 import { Button } from '../components/Button';
+import { gerarRelatorioGerencialPDF } from '../utils/pdfGenerator';
 import { 
   CONFIG_DDS_METAS, 
   calcularDuracaoMinutos, 
@@ -488,6 +490,11 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const exportarRelatorioPDF = () => {
+    if (ddsFiltrados.length === 0) return;
+    gerarRelatorioGerencialPDF(ddsFiltrados, metricas, filtroPeriodo, filtroResponsavel);
+  };
+
   return (
     <div className="w-full max-w-7xl mx-auto space-y-6 pb-16 animate-fadeIn">
 
@@ -523,6 +530,17 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
         {/* AÇÕES DE EXPORTAÇÃO */}
         <div className="flex flex-wrap items-center gap-3 self-start lg:self-auto shrink-0">
+          <button
+            type="button"
+            onClick={exportarRelatorioPDF}
+            disabled={ddsFiltrados.length === 0}
+            className="py-2.5 px-4 rounded-xl bg-yellow-500 hover:bg-yellow-400 text-slate-950 font-black text-xs uppercase tracking-wider transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
+            title="Exportar relatório gerencial em PDF corporativo"
+          >
+            <FileText className="w-4 h-4 text-slate-950" />
+            <span>Exportar PDF</span>
+          </button>
+
           <button
             type="button"
             onClick={exportarRelatorioCSV}

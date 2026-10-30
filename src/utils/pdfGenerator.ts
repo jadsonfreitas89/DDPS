@@ -4,6 +4,7 @@ import { api } from '../services/api';
 import { formatarDataApenas, formatarHoraApenas } from './dateFormatter';
 import { getSundayOfWeek, getSemanaId, getSemanaNumero, pertenceASemana } from './weekUtils';
 import { sanitizeMotivoAusencia } from './absenceUtils';
+import { formatarHorarioExibicao } from './durationUtils';
 
 export interface DiaSemanaConfig {
   nome: string;
@@ -999,4 +1000,356 @@ export async function gerarPDFSemanalDDPS(
 
   const t7 = performance.now();
   console.log(`[PERF PDF] T7: Download do PDF concluído (Tempo total T0->T7: ${(t7 - t0).toFixed(2)}ms)`);
+}
+
+/**
+ * ============================================================================
+ * GERADOR DE RELATÓRIO GERENCIAL PDF PROFISSIONAL (ADMIN)
+ * ============================================================================
+ */
+export function gerarRelatorioGerencialPDF(
+  ddsFiltrados: any[],
+  metricas: any,
+  filtroPeriodo: string = 'todos',
+  filtroResponsavel: string = 'todos'
+) {
+  const doc = new jsPDF('p', 'mm', 'a4');
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 14;
+  const usableWidth = pageWidth - margin * 2;
+
+  let currentY = margin;
+
+  // Função auxiliar para rodapé em todas as páginas
+  const addFooter = () => {
+    const pageCount = (doc as any).internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(120, 120, 120);
+      doc.text(
+        `DDPS Gerencial • Sistema de Diálogo Diário Participativo de Segurança`,
+        margin,
+        pageHeight - 10
+      );
+      doc.text(
+        `Página ${i} de ${pageCount}`,
+        pageWidth - margin,
+        pageHeight - 10,
+        { align: 'right' }
+      );
+      doc.setDrawColor(220, 220, 220);
+      doc.setLineWidth(0.3);
+      doc.line(margin, pageHeight - 14, pageWidth - margin, pageHeight - 14);
+    }
+  };
+
+  // Função auxiliar para checar quebra de página
+  const checkPageBreak = (neededHeight: number) => {
+    if (currentY + neededHeight > pageHeight - 18) {
+      doc.addPage();
+      currentY = margin;
+    }
+  };
+
+  // ==========================================
+  // CAPA / IDENTIFICAÇÃO (COMPACTA E ELEGANTE)
+  // ==========================================
+  doc.setFillColor(15, 23, 42); // Slate 900
+  doc.rect(margin, currentY, usableWidth, 24, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.text('RELATÓRIO GERENCIAL — DIÁLOGO DIÁRIO DE SEGURANÇA (DDPS)', margin + 4, currentY + 9);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(203, 213, 225); // Slate 300
+  const periodoTexto = filtroPeriodo === 'todos' ? 'Todos os Períodos' : filtroPeriodo.toUpperCase();
+  const dataGeracao = new Date().toLocaleString('pt-BR');
+  doc.text(`Período: ${periodoTexto}  |  Gerado em: ${dataGeracao}  |  Responsável Filtro: ${filtroResponsavel}`, margin + 4, currentY + 17);
+
+  currentY += 30;
+
+  // ==========================================
+  // SEÇÃO 1 — RESUMO EXECUTIVO
+  // ==========================================
+  checkPageBreak(35);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(15, 23, 42);
+  doc.text('1. RESUMO EXECUTIVO', margin, currentY);
+  currentY += 6;
+
+  const summaryData = [
+    ['Total de DDPS Realizados', String(metricas.totalDDPS), 'Total de diálogos registrados no período.'],
+    ['Duração Média (Convencional)', metricas.duracaoMediaConvencional !== null ? `${metricas.duracaoMediaConvencional} min` : 'N/D', 'Média de tempo dos DDPS convencionais.'],
+    ['Término Médio (Convencional)', String(metricas.horarioMedioTerminoConvencional), 'Horário médio real de conclusão.'],
+    ['Aderência à Meta', `${metricas.percMetaConvencional}%`, 'Percentual concluído em até 20 min.'],
+    ['Dentro da Meta (≤ 20 min)', String(metricas.countMetaConvencional), 'Diálogos finalizados até 07:20.'],
+    ['Duração Excessiva (> 20 min)', String(metricas.countExcessivaConvencional), 'Diálogos finalizados após 07:20.'],
+    ['Total de Participantes', String(metricas.totalParticipantes), 'Soma de presenças em todos os DDPS.'],
+    ['Média por Diálogo', String(metricas.mediaParticipantes), 'Média de participantes por sessão.']
+  ];
+
+  (doc as any).autoTable({
+    startY: currentY,
+    head: [['Indicador', 'Valor', 'Descrição Explicativa']],
+    body: summaryData,
+    theme: 'grid',
+    headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+    bodyStyles: { fontSize: 8, textColor: [51, 65, 85] },
+    columnStyles: {
+      0: { cellWidth: 55, fontStyle: 'bold' },
+      1: { cellWidth: 35, halign: 'center', fontStyle: 'bold' },
+      2: { cellWidth: 92 }
+    },
+    margin: { left: margin, right: margin }
+  });
+
+  currentY = (doc as any).lastAutoTable.finalY + 10;
+
+  // ==========================================
+  // SEÇÃO 2 — REGRA DE DURAÇÃO
+  // ==========================================
+  checkPageBreak(30);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(15, 23, 42);
+  doc.text('2. REGRA OFICIAL DE DURAÇÃO E DESEMPENHO', margin, currentY);
+  currentY += 6;
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(71, 85, 105);
+  const regraTexto = 
+    '• Horário de Referência de Início: Fixado em 07:00 (America/Sao_Paulo).\n' +
+    '• Conclusão Oficial: Representada estritamente pelo horário da assinatura final do responsável pelo DDPS.\n' +
+    '• Fórmula de Duração: Tempo transcorrido entre 07:00 e a assinatura final do responsável.\n' +
+    '• Classificação Binária Oficial:\n' +
+    '   - Dentro da Meta: Conclusão até 07:20 (duração ≤ 20 min).\n' +
+    '   - Duração Excessiva: Conclusão após 07:20 (duração > 20 min).\n' +
+    'Nota: Não são utilizadas faixas de atenção intermediárias. Registros históricos sem horário de conclusão são marcados como Indisponível (N/D) sem atribuição de tempo fictício.';
+  
+  doc.text(doc.splitTextToSize(regraTexto, usableWidth), margin, currentY);
+  currentY += 32;
+
+  // ==========================================
+  // SEÇÃO 3 — DDPS GERAL DA ENGENHARIA
+  // ==========================================
+  checkPageBreak(30);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(15, 23, 42);
+  doc.text('3. SEÇÃO ESPECIAL — DDPS GERAL DA ENGENHARIA', margin, currentY);
+  currentY += 6;
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(71, 85, 105);
+  const geralDesc = 
+    'Os DDPS Gerais da Engenharia são identificados automaticamente pelo prefixo "DDPS Geral" no título. Esses encontros permanecem contabilizados no total de atividades e participações, mas possuem indicadores próprios e não interferem nos resultados de duração e meta dos DDPS convencionais.';
+  doc.text(doc.splitTextToSize(geralDesc, usableWidth), margin, currentY);
+  currentY += 14;
+
+  const geralSummary = [
+    ['Total de DDPS Gerais Realizados', String(metricas.finalizadosGerais)],
+    ['Duração Média dos DDPS Gerais', metricas.duracaoMediaGeral !== null ? `${metricas.duracaoMediaGeral} min` : 'N/D'],
+    ['Horário Médio de Término Geral', String(metricas.horarioMedioTerminoGeral)],
+    ['Participantes Alcançados (Geral)', String(metricas.totalParticipantesGerais)]
+  ];
+
+  (doc as any).autoTable({
+    startY: currentY,
+    head: [['Indicador Especial (DDPS Geral)', 'Métrica']],
+    body: geralSummary,
+    theme: 'grid',
+    headStyles: { fillColor: [79, 70, 229], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+    bodyStyles: { fontSize: 8, textColor: [51, 65, 85] },
+    columnStyles: {
+      0: { cellWidth: 120, fontStyle: 'bold' },
+      1: { cellWidth: 62, halign: 'center', fontStyle: 'bold' }
+    },
+    margin: { left: margin, right: margin }
+  });
+
+  currentY = (doc as any).lastAutoTable.finalY + 10;
+
+  // ==========================================
+  // SEÇÃO 4 — ANÁLISE DE DURAÇÃO
+  // ==========================================
+  checkPageBreak(25);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(15, 23, 42);
+  doc.text('4. DISTRIBUIÇÃO DA CLASSIFICAÇÃO DE DESEMPENHO', margin, currentY);
+  currentY += 6;
+
+  const duracaoAnalysisData = [
+    ['Dentro da Meta (≤ 20 min)', String(metricas.countMetaConvencional), `${metricas.percMetaConvencional}%`],
+    ['Duração Excessiva (> 20 min)', String(metricas.countExcessivaConvencional), `${metricas.percExcessivaConvencional}%`]
+  ];
+
+  (doc as any).autoTable({
+    startY: currentY,
+    head: [['Classificação de Desempenho', 'Quantidade', 'Percentual (%)']],
+    body: duracaoAnalysisData,
+    theme: 'grid',
+    headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+    bodyStyles: { fontSize: 8, textColor: [51, 65, 85] },
+    columnStyles: {
+      0: { cellWidth: 90, fontStyle: 'bold' },
+      1: { cellWidth: 46, halign: 'center' },
+      2: { cellWidth: 46, halign: 'center', fontStyle: 'bold' }
+    },
+    margin: { left: margin, right: margin }
+  });
+
+  currentY = (doc as any).lastAutoTable.finalY + 10;
+
+  // ==========================================
+  // SEÇÃO 5 — TEMAS MAIS ABORDADOS
+  // ==========================================
+  checkPageBreak(30);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(15, 23, 42);
+  doc.text('5. RANKING DOS TEMAS MAIS ABORDADOS', margin, currentY);
+  currentY += 6;
+
+  const temasRows = (metricas.temasOrdenados || []).map((t: any, idx: number) => [
+    `#${idx + 1}`,
+    t.tema + (t.isGeral ? ' [DDPS GERAL]' : ''),
+    String(t.qtd),
+    `${t.percentual}%`
+  ]);
+
+  (doc as any).autoTable({
+    startY: currentY,
+    head: [['Pos.', 'Tema / Assunto de Segurança', 'Ocorrências', 'Representatividade']],
+    body: temasRows.length > 0 ? temasRows : [['-', 'Nenhum tema registrado no período', '0', '0%']],
+    theme: 'grid',
+    headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+    bodyStyles: { fontSize: 8, textColor: [51, 65, 85] },
+    columnStyles: {
+      0: { cellWidth: 15, halign: 'center', fontStyle: 'bold' },
+      1: { cellWidth: 115 },
+      2: { cellWidth: 26, halign: 'center' },
+      3: { cellWidth: 26, halign: 'center', fontStyle: 'bold' }
+    },
+    margin: { left: margin, right: margin }
+  });
+
+  currentY = (doc as any).lastAutoTable.finalY + 10;
+
+  // ==========================================
+  // SEÇÃO 6 — DESEMPENHO POR RESPONSÁVEL / TST
+  // ==========================================
+  checkPageBreak(35);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(15, 23, 42);
+  doc.text('6. DESEMPENHO POR RESPONSÁVEL / TST', margin, currentY);
+  currentY += 6;
+
+  const respRows = (metricas.responsaveisOrdenados || []).map((r: any) => [
+    r.responsavel,
+    String(r.total),
+    `${r.convencionaisQtd} conv. / ${r.geraisQtd} ger.`,
+    r.duracaoMediaConv !== null ? `${r.duracaoMediaConv} min` : 'N/D',
+    String(r.dentroMetaConv),
+    `${r.percMetaConv}%`,
+    r.duracaoMediaGeral !== null ? `${r.duracaoMediaGeral} min` : 'N/D',
+    String(r.participantesTotal)
+  ]);
+
+  (doc as any).autoTable({
+    startY: currentY,
+    head: [['Responsável / TST', 'Total', 'Conv./Geral', 'Média Conv.', 'Na Meta', '% Meta', 'Média Geral', 'Partic.']],
+    body: respRows.length > 0 ? respRows : [['-', '0', '0/0', 'N/D', '0', '0%', 'N/D', '0']],
+    theme: 'grid',
+    headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.5 },
+    bodyStyles: { fontSize: 7.5, textColor: [51, 65, 85] },
+    columnStyles: {
+      0: { cellWidth: 46, fontStyle: 'bold' },
+      1: { cellWidth: 14, halign: 'center' },
+      2: { cellWidth: 26, halign: 'center' },
+      3: { cellWidth: 22, halign: 'center' },
+      4: { cellWidth: 16, halign: 'center' },
+      5: { cellWidth: 18, halign: 'center', fontStyle: 'bold' },
+      6: { cellWidth: 22, halign: 'center' },
+      7: { cellWidth: 18, halign: 'center' }
+    },
+    margin: { left: margin, right: margin }
+  });
+
+  currentY = (doc as any).lastAutoTable.finalY + 10;
+
+  // ==========================================
+  // SEÇÃO 7 — HISTÓRICO DETALHADO DOS DIÁLOGOS
+  // ==========================================
+  checkPageBreak(40);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(15, 23, 42);
+  doc.text('7. HISTÓRICO DETALHADO DOS DIÁLOGOS', margin, currentY);
+  currentY += 6;
+
+  const historicoRows = ddsFiltrados.map((item: any) => {
+    const dataFmt = item.data ? formatarDataApenas(item.data) : '-';
+    const modalidade = item.isGeral ? 'DDPS Geral' : 'Convencional';
+    const responsavel = item.responsavel || '-';
+    const tema = item.tema || '-';
+    const terminoReal = item.horarioFinalizacao ? formatarHorarioExibicao(item.horarioFinalizacao) : 'Em aberto';
+    const duracaoStr = item.duracaoMinutos !== null && item.duracaoMinutos !== undefined ? `${item.duracaoMinutos} min` : 'N/D';
+    const particQtd = String(item.participantesQtd || item.participantes?.length || 0);
+    const classificacaoLabel = item.classificacao === 'DENTRO_DA_META' ? 'Dentro da Meta' : item.classificacao === 'EXCESSIVA' ? 'Duração Excessiva' : item.classificacao === 'GERAL' ? 'DDPS Geral' : 'Indisponível';
+
+    return [
+      dataFmt,
+      modalidade,
+      responsavel,
+      tema,
+      '07:00',
+      terminoReal,
+      duracaoStr,
+      particQtd,
+      classificacaoLabel
+    ];
+  });
+
+  (doc as any).autoTable({
+    startY: currentY,
+    head: [['Data', 'Modalidade', 'Responsável', 'Tema', 'Início', 'Assinatura Final', 'Duração', 'Partic.', 'Classificação']],
+    body: historicoRows.length > 0 ? historicoRows : [['-', '-', '-', 'Nenhum registro encontrado', '-', '-', '-', '-', '-']],
+    theme: 'grid',
+    headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.5 },
+    bodyStyles: { fontSize: 7, textColor: [51, 65, 85] },
+    columnStyles: {
+      0: { cellWidth: 20, halign: 'center' },
+      1: { cellWidth: 22, halign: 'center' },
+      2: { cellWidth: 32 },
+      3: { cellWidth: 40 },
+      4: { cellWidth: 15, halign: 'center' },
+      5: { cellWidth: 18, halign: 'center' },
+      6: { cellWidth: 16, halign: 'center', fontStyle: 'bold' },
+      7: { cellWidth: 12, halign: 'center' },
+      8: { cellWidth: 27, halign: 'center', fontStyle: 'bold' }
+    },
+    margin: { left: margin, right: margin },
+    rowPageBreak: 'avoid',
+    didDrawPage: () => {
+      // Repete o cabeçalho se houver quebra automática de página pelo autoTable
+    }
+  });
+
+  // Adiciona rodapés em todas as páginas geradas
+  addFooter();
+
+  // Salva o PDF com nome profissional
+  const nomeArquivo = `Relatorio_Gerencial_DDPS_${new Date().toISOString().substring(0, 10)}.pdf`;
+  doc.save(nomeArquivo);
 }
