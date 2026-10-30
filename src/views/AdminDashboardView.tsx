@@ -447,7 +447,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       'Local',
       'Status',
       'Horário Início Oficial',
-      'Horário Conclusão (finalizedAt)',
+      'Horário da Assinatura Final',
       'Duração (Minutos)',
       'Classificação de Desempenho',
       'Participantes'
@@ -523,7 +523,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               </span>
             </div>
             <p className="text-xs sm:text-sm text-gray-400 mt-1 max-w-2xl leading-relaxed">
-              Monitoramento oficial do tempo de duração (finalizedAt - 07:00), cumprimento da meta de 20 minutos e segregação do DDPS Geral.
+              Monitoramento oficial do tempo de duração (calculado entre 07:00 e a assinatura final), cumprimento da meta de 20 minutos e segregação do DDPS Geral.
             </p>
           </div>
         </div>
@@ -578,7 +578,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               <span className="text-[10px] text-gray-400 font-normal">• Início: 07:00 ({CONFIG_DDS_METAS.FUSO_HORARIO})</span>
             </div>
             <p className="text-xs text-gray-300 mt-0.5 font-medium">
-              Conclusão Oficial: <span className="text-white font-bold">Assinatura Final do Responsável (finalizedAt)</span> • Duração = finalizedAt - 07:00
+              Conclusão Oficial: <span className="text-white font-bold">Assinatura Final do Responsável</span> • Duração = Tempo transcorrido entre 07:00 e a Assinatura Final
             </p>
           </div>
         </div>
@@ -998,7 +998,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               <span className="text-xs font-bold text-gray-500">{metricas.comDuracaoConvencional} medidos</span>
             </div>
             <p className="text-xs text-gray-500 leading-relaxed">
-              Distribuição por faixas horárias de conclusão oficial (finalizedAt - 07:00). Exclui DDPS Geral.
+              Distribuição por faixas horárias de conclusão oficial (baseado na assinatura final do responsável). Exclui DDPS Geral.
             </p>
           </div>
 
@@ -1202,7 +1202,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
               Histórico Detalhado dos Diálogos
             </h3>
             <p className="text-xs text-gray-500">
-              Registros individuais contendo horário de início (07:00), conclusão oficial da assinatura (finalizedAt) e duração gerencial.
+              Registros individuais contendo horário de início (07:00), horário da assinatura final do responsável e duração gerencial.
             </p>
           </div>
 
@@ -1227,7 +1227,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   <th className="py-3 px-3.5">Responsável</th>
                   <th className="py-3 px-3.5">Tema</th>
                   <th className="py-3 px-3 text-center">Início Oficial</th>
-                  <th className="py-3 px-3 text-center">Conclusão (finalizedAt)</th>
+                  <th className="py-3 px-3 text-center">Assinatura Final</th>
                   <th className="py-3 px-3 text-center">Duração</th>
                   <th className="py-3 px-3 text-center">Partic.</th>
                   <th className="py-3 px-3.5">Desempenho</th>
@@ -1284,7 +1284,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                         {CONFIG_DDS_METAS.HORARIO_OFICIAL_INICIO}
                       </td>
 
-                      {/* CONCLUSÃO REAL (finalizedAt) */}
+                      {/* CONCLUSÃO REAL (ASSINATURA FINAL) */}
                       <td className="py-3 px-3 text-center font-mono font-bold text-gray-900">
                         {item.isFinalizado ? terminoTexto : (
                           <span className="text-amber-600 font-semibold text-[10px]">Em aberto</span>
