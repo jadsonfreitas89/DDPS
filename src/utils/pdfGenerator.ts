@@ -542,9 +542,9 @@ export async function gerarPDFSemanalDDPS(
   doc.line(midLeftX, row1Y, midLeftX, row4Y);
 
   const intervalo = obterIntervaloSemana(status, ddsSemana);
-  const contratada = 'TESLA';
-  const subcontratada = '';
-  const semanaTexto = `${intervalo.dataInicioStr} á ${intervalo.dataFimStr}`;
+  const contratada = (status as any)?.empresa || (status as any)?.contratada || '';
+  const subcontratada = (status as any)?.subcontratada || '';
+  const semanaTexto = `${intervalo.dataInicioStr} a ${intervalo.dataFimStr}`;
   
   // Busca o LOCAL do DDS em qualquer dia da semana ou no array ddsSemana
   let localStr = '';
@@ -1014,65 +1014,23 @@ export function gerarRelatorioGerencialPDF(
   filtroResponsavel: string = 'todos'
 ) {
   const doc = new jsPDF('p', 'mm', 'a4');
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const pageHeight = doc.internal.pageSize.getHeight();
+  const pageWidth = doc.internal.pageSize.getWidth(); // 210mm
+  const pageHeight = doc.internal.pageSize.getHeight(); // 297mm
   const margin = 14;
-  const usableWidth = pageWidth - margin * 2;
+  const usableWidth = pageWidth - margin * 2; // 182mm
 
-  let currentY = margin;
-
-  // Função auxiliar para rodapé em todas as páginas
-  const addFooter = () => {
-    const pageCount = (doc as any).internal.getNumberOfPages();
-    for (let i = 1; i <= pageCount; i++) {
-      doc.setPage(i);
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8);
-      doc.setTextColor(120, 120, 120);
-      doc.text(
-        `DDPS Gerencial • Sistema de Diálogo Diário Participativo de Segurança`,
-        margin,
-        pageHeight - 10
-      );
-      doc.text(
-        `Página ${i} de ${pageCount}`,
-        pageWidth - margin,
-        pageHeight - 10,
-        { align: 'right' }
-      );
-      doc.setDrawColor(220, 220, 220);
-      doc.setLineWidth(0.3);
-      doc.line(margin, pageHeight - 14, pageWidth - margin, pageHeight - 14);
-    }
-  };
+  // Definições de altura para o cabeçalho corporativo institucional
+  const headerHeight = 26;
+  const contentTopMargin = margin + headerHeight + 4; // 44mm
+  let currentY = contentTopMargin;
 
   // Função auxiliar para checar quebra de página
   const checkPageBreak = (neededHeight: number) => {
     if (currentY + neededHeight > pageHeight - 18) {
       doc.addPage();
-      currentY = margin;
+      currentY = contentTopMargin;
     }
   };
-
-  // ==========================================
-  // CAPA / IDENTIFICAÇÃO (COMPACTA E ELEGANTE)
-  // ==========================================
-  doc.setFillColor(15, 23, 42); // Slate 900
-  doc.rect(margin, currentY, usableWidth, 24, 'F');
-
-  doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
-  doc.text('RELATÓRIO GERENCIAL — DIÁLOGO DIÁRIO DE SEGURANÇA (DDPS)', margin + 4, currentY + 9);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.setTextColor(203, 213, 225); // Slate 300
-  const periodoTexto = filtroPeriodo === 'todos' ? 'Todos os Períodos' : filtroPeriodo.toUpperCase();
-  const dataGeracao = new Date().toLocaleString('pt-BR');
-  doc.text(`Período: ${periodoTexto}  |  Gerado em: ${dataGeracao}  |  Responsável Filtro: ${filtroResponsavel}`, margin + 4, currentY + 17);
-
-  currentY += 30;
 
   // ==========================================
   // SEÇÃO 1 — RESUMO EXECUTIVO
@@ -1107,7 +1065,7 @@ export function gerarRelatorioGerencialPDF(
       1: { cellWidth: 35, halign: 'center', fontStyle: 'bold' },
       2: { cellWidth: 92 }
     },
-    margin: { left: margin, right: margin }
+    margin: { left: margin, right: margin, top: contentTopMargin, bottom: 18 }
   });
 
   currentY = (doc as any).lastAutoTable.finalY + 10;
@@ -1173,7 +1131,7 @@ export function gerarRelatorioGerencialPDF(
       0: { cellWidth: 120, fontStyle: 'bold' },
       1: { cellWidth: 62, halign: 'center', fontStyle: 'bold' }
     },
-    margin: { left: margin, right: margin }
+    margin: { left: margin, right: margin, top: contentTopMargin, bottom: 18 }
   });
 
   currentY = (doc as any).lastAutoTable.finalY + 10;
@@ -1205,7 +1163,7 @@ export function gerarRelatorioGerencialPDF(
       1: { cellWidth: 46, halign: 'center' },
       2: { cellWidth: 46, halign: 'center', fontStyle: 'bold' }
     },
-    margin: { left: margin, right: margin }
+    margin: { left: margin, right: margin, top: contentTopMargin, bottom: 18 }
   });
 
   currentY = (doc as any).lastAutoTable.finalY + 10;
@@ -1240,7 +1198,7 @@ export function gerarRelatorioGerencialPDF(
       2: { cellWidth: 26, halign: 'center' },
       3: { cellWidth: 26, halign: 'center', fontStyle: 'bold' }
     },
-    margin: { left: margin, right: margin }
+    margin: { left: margin, right: margin, top: contentTopMargin, bottom: 18 }
   });
 
   currentY = (doc as any).lastAutoTable.finalY + 10;
@@ -1283,7 +1241,7 @@ export function gerarRelatorioGerencialPDF(
       6: { cellWidth: 22, halign: 'center' },
       7: { cellWidth: 18, halign: 'center' }
     },
-    margin: { left: margin, right: margin }
+    margin: { left: margin, right: margin, top: contentTopMargin, bottom: 18 }
   });
 
   currentY = (doc as any).lastAutoTable.finalY + 10;
@@ -1339,15 +1297,72 @@ export function gerarRelatorioGerencialPDF(
       7: { cellWidth: 12, halign: 'center' },
       8: { cellWidth: 27, halign: 'center', fontStyle: 'bold' }
     },
-    margin: { left: margin, right: margin },
-    rowPageBreak: 'avoid',
-    didDrawPage: () => {
-      // Repete o cabeçalho se houver quebra automática de página pelo autoTable
-    }
+    margin: { left: margin, right: margin, top: contentTopMargin, bottom: 18 },
+    rowPageBreak: 'avoid'
   });
 
-  // Adiciona rodapés em todas as páginas geradas
-  addFooter();
+  // ==========================================
+  // CABEÇALHO INSTITUCIONAL E RODAPÉ PADRONIZADOS EM TODAS AS PÁGINAS
+  // ==========================================
+  const pageCount = (doc as any).internal.getNumberOfPages();
+  const periodoTexto = filtroPeriodo === 'todos' ? 'Todos os Períodos' : filtroPeriodo.toUpperCase();
+  const responsavelTexto = filtroResponsavel === 'todos' ? 'Todos os Responsáveis' : filtroResponsavel;
+
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+
+    const topY = margin; // 14mm
+
+    // Garante Fundo Branco no topo
+    doc.setFillColor(255, 255, 255);
+    doc.rect(margin - 2, topY - 2, usableWidth + 4, headerHeight + 2, 'F');
+
+    // Linha 1 Superior: Identificação institucional e identificação do documento (DDPS)
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(51, 65, 85); // Slate 700
+    doc.text('SISTEMA DE SEGURANÇA DO TRABALHO', margin, topY + 4);
+    doc.text('DOCUMENTO OFICIAL — DDPS', pageWidth - margin, topY + 4, { align: 'right' });
+
+    // Linha 2 Central: Título Central DIÁLOGO DIÁRIO PARTICIPATIVO DE SEGURANÇA
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.setTextColor(15, 23, 42); // Slate 900
+    doc.text('DIÁLOGO DIÁRIO PARTICIPATIVO DE SEGURANÇA', pageWidth / 2, topY + 11, { align: 'center' });
+
+    // Linha 3 Inferior: Data | Unidade / Local | Responsável
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(71, 85, 105); // Slate 600
+    const infoLinhaInferior = `Período: ${periodoTexto}   •   Unidade: Engenharia / DDPS   •   Responsável: ${responsavelTexto}`;
+    doc.text(infoLinhaInferior, pageWidth / 2, topY + 17, { align: 'center' });
+
+    // Linha Divisória Discreta
+    doc.setDrawColor(203, 213, 225); // Slate 300
+    doc.setLineWidth(0.4);
+    doc.line(margin, topY + 21, pageWidth - margin, topY + 21);
+
+    // ==========================================
+    // RODAPÉ DISCRETO DO PDF
+    // ==========================================
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139); // Slate 500
+    doc.text(
+      `DDPS Gerencial • Sistema de Diálogo Diário Participativo de Segurança`,
+      margin,
+      pageHeight - 10
+    );
+    doc.text(
+      `Página ${i} de ${pageCount}`,
+      pageWidth - margin,
+      pageHeight - 10,
+      { align: 'right' }
+    );
+    doc.setDrawColor(226, 232, 240); // Slate 200
+    doc.setLineWidth(0.3);
+    doc.line(margin, pageHeight - 14, pageWidth - margin, pageHeight - 14);
+  }
 
   // Salva o PDF com nome profissional
   const nomeArquivo = `Relatorio_Gerencial_DDPS_${new Date().toISOString().substring(0, 10)}.pdf`;
