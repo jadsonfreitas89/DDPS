@@ -663,6 +663,25 @@ function doPost(e) {
 
       case 'registrarAssinaturaEncarregado':
         exigirAutenticacao(token);
+        if (dados.idDDS && (dados.horarioFinalizacao || dados.finalizedAt || dados.dataFinalizacao)) {
+          try {
+            var sheetDDSAss = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(DDPS_ABAS.DDS);
+            if (sheetDDSAss && sheetDDSAss.getLastRow() >= 2) {
+              garantirSchemaDDS(sheetDDSAss);
+              var ddsRows = sheetDDSAss.getRange(2, 1, sheetDDSAss.getLastRow() - 1, 1).getValues();
+              for (var r = 0; r < ddsRows.length; r++) {
+                if (String(ddsRows[r][0] || '').trim() === String(dados.idDDS).trim()) {
+                  if (dados.horarioFinalizacao) sheetDDSAss.getRange(r + 2, 15).setValue(dados.horarioFinalizacao);
+                  if (dados.finalizedAt || dados.dataFinalizacao) sheetDDSAss.getRange(r + 2, 16).setValue(dados.finalizedAt || dados.dataFinalizacao);
+                  SpreadsheetApp.flush();
+                  break;
+                }
+              }
+            }
+          } catch (errHorarioAss) {
+            Logger.log('Aviso ao persistir horario em registrarAssinaturaEncarregado: ' + errHorarioAss.message);
+          }
+        }
         return respostaJSON(registrarAssinatura(dados.idDDS, dados.idFuncionario || dados.id, dados.assinatura, 'ENCARREGADO'));
 
       case 'salvarDDSCompleto':
@@ -2166,6 +2185,7 @@ function listarDDS() {
 
   // Pré-carrega o mapa de assinaturas de encarregado para evitar a consulta N+1 na aba ASSINATURAS
   var mapAssinaturasEncarregado = {};
+  var mapDataHoraAssinaturaEncarregado = {};
   try {
     var sheetAss = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(DDPS_ABAS.ASSINATURAS);
     if (sheetAss && sheetAss.getLastRow() >= 2) {
@@ -2175,9 +2195,11 @@ function listarDDS() {
       for (var a = 0; a < dadosAss.length; a++) {
         var ddsIdAss = String(dadosAss[a][1] || '').trim();
         var arquivoAss = String(dadosAss[a][3] || '').trim();
+        var dataHoraAss = dadosAss[a][4];
         var tipoAss = colCountAss >= 6 ? String(dadosAss[a][5] || 'PARTICIPANTE').trim().toUpperCase() : 'PARTICIPANTE';
-        if (ddsIdAss && tipoAss === 'ENCARREGADO' && arquivoAss) {
-          mapAssinaturasEncarregado[ddsIdAss] = arquivoAss;
+        if (ddsIdAss && tipoAss === 'ENCARREGADO') {
+          if (arquivoAss) mapAssinaturasEncarregado[ddsIdAss] = arquivoAss;
+          if (dataHoraAss) mapDataHoraAssinaturaEncarregado[ddsIdAss] = dataHoraAss;
         }
       }
     }
@@ -2216,6 +2238,22 @@ function listarDDS() {
     }
 
     var idDDSStr = String(dados[i][0]).trim();
+    var horarioFin = numCols >= 15 ? String(dados[i][14] || '').trim() : '';
+    var dataFin = numCols >= 16 ? String(dados[i][15] || '').trim() : '';
+
+    // Se as colunas 15/16 estiverem vazias, avalia se há timestamp real da assinatura do encarregado na aba ASSINATURAS
+    if (!horarioFin && mapDataHoraAssinaturaEncarregado[idDDSStr]) {
+      var dh = mapDataHoraAssinaturaEncarregado[idDDSStr];
+      if (dh instanceof Date) {
+        var tz = Session.getScriptTimeZone() || 'America/Sao_Paulo';
+        horarioFin = Utilities.formatDate(dh, tz, 'HH:mm:ss');
+        dataFin = Utilities.formatDate(dh, tz, 'yyyy-MM-dd\'T\'HH:mm:ss.SSSXXX');
+      } else if (typeof dh === 'string' && dh.trim()) {
+        dataFin = dh.trim();
+        var matchH = dataFin.match(/(\d{1,2}:\d{2})/);
+        if (matchH) horarioFin = matchH[1] + ':00';
+      }
+    }
 
     lista.push({
 
@@ -2232,6 +2270,9 @@ function listarDDS() {
 
       horario:
         dados[i][3],
+
+      createdAt:
+        String(dados[i][11] || dados[i][2] || '').trim(),
 
       diaSemana:
         String(
@@ -2276,6 +2317,15 @@ function listarDDS() {
 
       encarregadoNome:
         numCols >= 14 ? String(dados[i][13] || '').trim() : '',
+
+      horarioFinalizacao:
+        horarioFin,
+
+      dataFinalizacao:
+        dataFin,
+
+      finalizedAt:
+        dataFin,
 
       assinaturaEncarregado:
         mapAssinaturasEncarregado[idDDSStr] || '',
@@ -2337,7 +2387,7 @@ function obterStatusGeral() {
  * FINALIZAR DDS
  * ============================================================ */
 
-function finalizarDDS(idDDS) {
+function finalizarDDS(idDDS, horarioFinalizacao, dataFinalizacao) {
 
   idDDS =
     String(
@@ -2410,6 +2460,15 @@ function finalizarDDS(idDDS) {
         .setValue(
           'FINALIZADO'
         );
+
+      var agora = new Date();
+      var tz = Session.getScriptTimeZone() || 'America/Sao_Paulo';
+      var horaTermino = String(horarioFinalizacao || Utilities.formatDate(agora, tz, 'HH:mm:ss')).trim();
+      var dataTermino = String(dataFinalizacao || Utilities.formatDate(agora, tz, 'dd/MM/yyyy HH:mm:ss')).trim();
+
+      garantirSchemaDDS(sheet);
+      sheet.getRange(linha, 15).setValue(horaTermino);
+      sheet.getRange(linha, 16).setValue(dataTermino);
 
       SpreadsheetApp.flush();
 
@@ -2977,7 +3036,7 @@ function salvarDDSCompleto(dados) {
 
   // 4. Finalizar se solicitado
   if (idDDS && (dados.finalizar === true || dados.status === 'FINALIZADO')) {
-    finalizarDDS(idDDS);
+    finalizarDDS(idDDS, dados.horarioFinalizacao, dados.finalizedAt || dados.dataFinalizacao);
     if (ddsObj) ddsObj.status = 'FINALIZADO';
   }
 
@@ -5482,7 +5541,38 @@ function garantirSchemaDDS(sheet) {
     sheet.getRange(1, 14).setFontWeight('bold');
     sheet.getRange(1, 14).setHorizontalAlignment('center');
   }
+  if (headersUpper.indexOf('HORARIO_FINALIZACAO') === -1) {
+    sheet.getRange(1, 15).setValue('HORARIO_FINALIZACAO');
+    sheet.getRange(1, 15).setFontWeight('bold');
+    sheet.getRange(1, 15).setHorizontalAlignment('center');
+  }
+  if (headersUpper.indexOf('DATA_FINALIZACAO') === -1) {
+    sheet.getRange(1, 16).setValue('DATA_FINALIZACAO');
+    sheet.getRange(1, 16).setFontWeight('bold');
+    sheet.getRange(1, 16).setHorizontalAlignment('center');
+  }
   SpreadsheetApp.flush();
+}
+
+/**
+ * ============================================================
+ * REGRA ESPECIAL — DDPS GERAL DA ENGENHARIA
+ * ============================================================
+ * Identifica se um DDPS é da modalidade GERAL ou CONVENCIONAL
+ * Critérios:
+ * - Comparação case-insensitive.
+ * - Remover espaços excedentes no início do título antes da comparação.
+ * - Reconhecer somente quando o título começar com "DDPS Geral".
+ * - Não classificar como geral quando a expressão aparecer no meio do título.
+ */
+function isDDPSGeral(temaOuTitulo) {
+  if (!temaOuTitulo || typeof temaOuTitulo !== 'string') return false;
+  var limpo = String(temaOuTitulo).replace(/^\s+/, '').toLowerCase();
+  return limpo.indexOf('ddps geral') === 0;
+}
+
+function identificarTipoDDPS(temaOuTitulo) {
+  return isDDPSGeral(temaOuTitulo) ? 'GERAL' : 'CONVENCIONAL';
 }
 
 function removerAssinaturaEncarregado(idDDS) {

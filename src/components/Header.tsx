@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Calendar, Clock, Settings, HardHat, Users, LogOut, Shield, KeyRound, ChevronDown, Menu, X } from 'lucide-react';
+import { Calendar, Clock, Settings, HardHat, Users, LogOut, Shield, KeyRound, ChevronDown, Menu, X, BarChart3 } from 'lucide-react';
 import { DDPSStatus, Usuario } from '../types';
 import { formatarHoraApenas, formatarDataApenas } from '../utils/dateFormatter';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -10,7 +10,7 @@ interface HeaderProps {
   currentUser?: Usuario | null;
   onOpenConfig?: () => void;
   isApiConfigured?: boolean;
-  onNavigate?: (screen: 'inicio' | 'lista_dds' | 'funcionarios' | 'usuarios' | 'consultar_semanas') => void;
+  onNavigate?: (screen: 'inicio' | 'lista_dds' | 'funcionarios' | 'usuarios' | 'consultar_semanas' | 'dashboard') => void;
   onLogout?: () => void;
   onChangePassword?: () => void;
 }
@@ -160,6 +160,19 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
 
+            {/* DASHBOARD GERENCIAL (EXCLUSIVO ADMIN) */}
+            {currentUser?.perfil === 'ADMIN' && onNavigate && (
+              <button
+                type="button"
+                onClick={() => onNavigate('dashboard')}
+                className="p-2 sm:p-2.5 rounded-xl bg-purple-950/40 hover:bg-purple-900/60 text-purple-300 hover:text-purple-200 border border-purple-800/50 transition-colors flex items-center gap-1.5 px-2.5 sm:px-3 min-h-[40px] shrink-0"
+                title="Dashboard Gerencial (Exclusivo ADMIN)"
+              >
+                <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5 text-purple-400 shrink-0" />
+                <span className="hidden lg:inline text-xs font-bold whitespace-nowrap">Dashboard</span>
+              </button>
+            )}
+
             {/* BOTÃO INSTALAÇÃO PWA */}
             <PWAInstallButton />
 
@@ -206,6 +219,20 @@ export const Header: React.FC<HeaderProps> = ({
                     >
                       <Shield className="w-4 h-4 text-purple-400" />
                       <span>Gerenciar Usuários</span>
+                    </button>
+                  )}
+
+                  {currentUser?.perfil === 'ADMIN' && onNavigate && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowConfigMenu(false);
+                        onNavigate('dashboard');
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-xs font-semibold text-gray-200 hover:bg-gray-800 hover:text-purple-300 flex items-center gap-2 transition-colors"
+                    >
+                      <BarChart3 className="w-4 h-4 text-purple-400" />
+                      <span>Dashboard Gerencial</span>
                     </button>
                   )}
 
@@ -363,6 +390,20 @@ export const Header: React.FC<HeaderProps> = ({
                   >
                     <Shield className="w-5 h-5 text-purple-400" />
                     <span>Gerenciar Usuários</span>
+                  </button>
+                )}
+
+                {currentUser?.perfil === 'ADMIN' && onNavigate && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMobileMenuOpen(false);
+                      onNavigate('dashboard');
+                    }}
+                    className="w-full text-left px-4 py-3 rounded-xl text-sm font-bold text-purple-300 hover:bg-purple-900/30 flex items-center gap-3 transition-colors min-h-[44px]"
+                  >
+                    <BarChart3 className="w-5 h-5 text-purple-400" />
+                    <span>Dashboard Gerencial</span>
                   </button>
                 )}
 

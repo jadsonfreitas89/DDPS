@@ -40,6 +40,7 @@ export interface DDS {
   diaSemanaNumero?: number;
   data: string;
   horario: string;
+  createdAt?: string; // Data/hora oficial da criação do registro
   tema: string;
   conteudo: string;
   local: string;
@@ -51,6 +52,10 @@ export interface DDS {
   encarregadoId?: string;
   encarregadoNome?: string;
   assinaturaEncarregado?: string; // Base64 data URL
+  horarioFinalizacao?: string; // Horário real da assinatura final do responsável (ex: "07:37:00")
+  dataFinalizacao?: string; // Data ISO de conclusão
+  finalizedAt?: string; // Data e hora oficial da assinatura final do responsável
+  duracaoMinutos?: number; // Duração calculada (finalizedAt - 07:00)
   syncStatus?: 'synced' | 'pending' | 'syncing' | 'error';
   clientOfflineId?: string;
   clientSyncId?: string;
@@ -112,4 +117,5 @@ export type ScreenView =
   | 'lista_dds'
   | 'funcionarios'
   | 'usuarios'
-  | 'consultar_semanas';
+  | 'consultar_semanas'
+  | 'dashboard';

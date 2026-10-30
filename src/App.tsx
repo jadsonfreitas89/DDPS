@@ -46,11 +46,13 @@ import { EmployeesView } from './views/EmployeesView';
 import { LoginView } from './views/LoginView';
 import { UserManagementView } from './views/UserManagementView';
 import { ConsultarSemanasView } from './views/ConsultarSemanasView';
+import { AdminDashboardView } from './views/AdminDashboardView';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { ConfirmationModal } from './components/ConfirmationModal';
 import { getSemanaId, pertenceASemana } from './utils/weekUtils';
 import { sanitizeMotivoAusencia } from './utils/absenceUtils';
 import { isDraftFinalized, shouldBlockNewDDS, isDraftForToday } from './utils/draftUtils';
+import { getHoraAtualSaoPaulo, calcularDuracaoMinutos } from './utils/durationUtils';
 
 import {
   CheckCircle,
@@ -875,11 +877,19 @@ export default function App() {
         motivoAusencia: p.ausente ? (sanitizeMotivoAusencia(p.motivoAusencia) || 'Atestado') : ''
       }));
 
+      // O horário oficial de conclusão é rigorosamente o da assinatura final do responsável
+      const horaTermino = activeDDS.horarioFinalizacao || getHoraAtualSaoPaulo();
+      const dataTermino = activeDDS.finalizedAt || activeDDS.dataFinalizacao || new Date().toISOString();
+      const duracaoMin = calcularDuracaoMinutos(horaTermino);
+
       // 1 Única Chamada HTTP Consolidada para salvar participantes e finalizar
       const resultado = await api.salvarDDSCompleto({
         idDDS: currentIdDDS,
         participantes: payloadParts,
-        finalizar: true
+        finalizar: true,
+        horarioFinalizacao: horaTermino,
+        dataFinalizacao: dataTermino,
+        finalizedAt: dataTermino
       });
 
       const finalizacaoSucesso = Boolean(
@@ -903,14 +913,32 @@ export default function App() {
       setDdsSemana((prev) =>
         prev.map((d) =>
           d.idDDS === currentIdDDS
-            ? { ...d, status: updatedStatus, syncStatus: updatedSyncStatus, participantesQtd: participantesFinal.length }
+            ? { 
+                ...d, 
+                status: updatedStatus, 
+                syncStatus: updatedSyncStatus, 
+                participantesQtd: participantesFinal.length,
+                horarioFinalizacao: horaTermino,
+                dataFinalizacao: dataTermino,
+                finalizedAt: dataTermino,
+                duracaoMinutos: duracaoMin !== null ? duracaoMin : undefined
+              }
             : d
         )
       );
       setAllDDS((prev) =>
         prev.map((d) =>
           d.idDDS === currentIdDDS
-            ? { ...d, status: updatedStatus, syncStatus: updatedSyncStatus, participantesQtd: participantesFinal.length }
+            ? { 
+                ...d, 
+                status: updatedStatus, 
+                syncStatus: updatedSyncStatus, 
+                participantesQtd: participantesFinal.length,
+                horarioFinalizacao: horaTermino,
+                dataFinalizacao: dataTermino,
+                finalizedAt: dataTermino,
+                duracaoMinutos: duracaoMin !== null ? duracaoMin : undefined
+              }
             : d
         )
       );
@@ -1396,6 +1424,32 @@ export default function App() {
             )}
 
             {/* =================================================
+                TELA DASHBOARD GERENCIAL (EXCLUSIVO ADMIN)
+            ================================================== */}
+
+            {currentScreen === 'dashboard' && (
+              currentUser?.perfil === 'ADMIN' ? (
+                <AdminDashboardView
+                  allDDS={allDDS}
+                  status={status}
+                  currentUser={currentUser}
+                  onBack={() => setCurrentScreen('inicio')}
+                  onSelectDDS={(dds) => setSelectedDDSForView(dds)}
+                />
+              ) : (
+                <div className="py-12 text-center text-white">
+                  <p className="text-sm text-red-400 font-bold mb-3">Acesso restrito a administradores.</p>
+                  <button
+                    onClick={() => setCurrentScreen('inicio')}
+                    className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium transition"
+                  >
+                    Voltar ao Início
+                  </button>
+                </div>
+              )
+            )}
+
+            {/* =================================================
                 TELA NOVO DDS
             ================================================== */}
 
@@ -1505,9 +1559,16 @@ export default function App() {
                 onSignEncarregado={async (assinatura: string) => {
                   if (!activeDDS) return;
 
-                  const updatedDDS = {
+                  const isSigning = Boolean(assinatura && assinatura.trim().length > 50);
+                  const horaConclusao = isSigning ? (activeDDS.horarioFinalizacao || getHoraAtualSaoPaulo()) : undefined;
+                  const dataConclusao = isSigning ? (activeDDS.finalizedAt || new Date().toISOString()) : undefined;
+
+                  const updatedDDS: DDS = {
                     ...activeDDS,
-                    assinaturaEncarregado: assinatura
+                    assinaturaEncarregado: assinatura,
+                    horarioFinalizacao: horaConclusao,
+                    dataFinalizacao: dataConclusao,
+                    finalizedAt: dataConclusao
                   };
                   setActiveDDS(updatedDDS);
 
@@ -1516,17 +1577,23 @@ export default function App() {
                   const item = list.find((d) => d.idDDS === activeDDS.idDDS);
                   if (item) {
                     item.assinaturaEncarregado = assinatura;
+                    item.horarioFinalizacao = horaConclusao;
+                    item.dataFinalizacao = dataConclusao;
+                    item.finalizedAt = dataConclusao;
                     LocalDDSStorage.saveDDS(item);
                   }
+                  await offlineStorage.saveDDS(updatedDDS);
 
                   if (activeDDS.idDDS && !activeDDS.idDDS.startsWith('DDS-OFFLINE-')) {
                     try {
                       await api.registrarAssinaturaEncarregado(
                         activeDDS.idDDS,
                         activeDDS.encarregadoId || '',
-                        assinatura
+                        assinatura,
+                        horaConclusao,
+                        dataConclusao
                       );
-                      showToast('Assinatura do encarregado registrada!', 'success');
+                      showToast('Assinatura do encarregado registrada com horário oficial de conclusão!', 'success');
                     } catch (err) {
                       console.error('Erro ao salvar assinatura de encarregado:', err);
                       showToast('Salvo offline. Sincronização pendente.', 'info');

@@ -1430,6 +1430,10 @@ export const api = {
         encarregadoId: item.encarregadoId || '',
         encarregadoNome: item.encarregadoNome || '',
         assinaturaEncarregado: item.assinaturaEncarregado || '',
+        horarioFinalizacao: item.horarioFinalizacao || item.horario_finalizacao || item.HORARIO_FINALIZACAO || '',
+        dataFinalizacao: item.dataFinalizacao || item.data_finalizacao || item.DATA_FINALIZACAO || '',
+        finalizedAt: item.finalizedAt || item.dataFinalizacao || item.data_finalizacao || item.DATA_FINALIZACAO || '',
+        createdAt: item.createdAt || item.dataCriacao || item.DATA_CRIACAO || item.horario || '',
         syncStatus: 'synced',
         participantesQtd: typeof item.participantesQtd === 'number'
           ? item.participantesQtd
@@ -1897,6 +1901,9 @@ export const api = {
     encarregadoId?: string;
     encarregadoNome?: string;
     assinaturaEncarregado?: string;
+    horarioFinalizacao?: string;
+    dataFinalizacao?: string;
+    finalizedAt?: string;
     participantes?: Array<{
       idFuncionario: string;
       nome?: string;
@@ -1930,6 +1937,9 @@ export const api = {
         if (dados.assinaturaEncarregado) existingDDS.assinaturaEncarregado = dados.assinaturaEncarregado;
         if (dados.encarregadoId) existingDDS.encarregadoId = dados.encarregadoId;
         if (dados.encarregadoNome) existingDDS.encarregadoNome = dados.encarregadoNome;
+        if (dados.horarioFinalizacao) existingDDS.horarioFinalizacao = dados.horarioFinalizacao;
+        if (dados.dataFinalizacao) existingDDS.dataFinalizacao = dados.dataFinalizacao;
+        if (dados.finalizedAt || dados.dataFinalizacao) existingDDS.finalizedAt = dados.finalizedAt || dados.dataFinalizacao;
         
         // Se estiver offline, marca como pendente de sincronização
         if (!isOnline) {
@@ -2460,7 +2470,9 @@ export const api = {
   async registrarAssinaturaEncarregado(
     idDDS: string,
     idFuncionario: string,
-    assinatura: string
+    assinatura: string,
+    horarioFinalizacao?: string,
+    dataFinalizacao?: string
   ): Promise<{
     success: boolean;
     message?: string;
@@ -2470,6 +2482,11 @@ export const api = {
     const item = list.find((d) => d.idDDS === idDDS);
     if (item) {
       item.assinaturaEncarregado = assinatura;
+      if (horarioFinalizacao) item.horarioFinalizacao = horarioFinalizacao;
+      if (dataFinalizacao) {
+        item.dataFinalizacao = dataFinalizacao;
+        item.finalizedAt = dataFinalizacao;
+      }
       LocalDDSStorage.saveDDS(item);
     }
 
@@ -2479,7 +2496,10 @@ export const api = {
         action: 'registrarAssinaturaEncarregado',
         idDDS,
         idFuncionario,
-        assinatura
+        assinatura,
+        horarioFinalizacao,
+        dataFinalizacao,
+        finalizedAt: dataFinalizacao
       });
       
       const text = await res.text();
